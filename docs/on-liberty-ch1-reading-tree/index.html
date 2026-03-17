@@ -1,0 +1,669 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Reading Tree</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600&family=Libre+Baskerville:wght@400;700&display=swap" rel="stylesheet" />
+    <style>
+      :root {
+        --bg-0: #f4ece0;
+        --bg-1: #efe5d5;
+        --line: #d1bfa6;
+        --text: #4a3b2b;
+        --muted: #786652;
+        --card: #f8f1e6;
+        --accent: #ba8548;
+        --path-highlight: #b46c22;
+        --path-highlight-soft: rgba(180, 108, 34, 0.16);
+        --path-highlight-glow: rgba(180, 108, 34, 0.28);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        color: var(--text);
+        font-family: "Libre Baskerville", Georgia, "Times New Roman", serif;
+        background:
+          radial-gradient(1200px 700px at 8% 0%, #f8f2e6 0%, transparent 58%),
+          linear-gradient(155deg, var(--bg-1), var(--bg-0));
+      }
+
+      .page {
+        padding: 26px 24px 36px;
+      }
+
+      .header {
+        margin-bottom: 20px;
+      }
+
+      .title-row {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: baseline;
+        gap: 10px;
+      }
+
+      h1 {
+        margin: 0;
+        font-size: clamp(20px, 3vw, 28px);
+        letter-spacing: 0.16em;
+        color: #8a5f2f;
+      }
+
+      .subtitle {
+        font-size: 12px;
+        color: var(--muted);
+        letter-spacing: 0.14em;
+      }
+
+      .desc,
+      .footer {
+        color: var(--muted);
+        margin: 10px 0 0;
+        font-size: 12px;
+        line-height: 1.8;
+      }
+
+      .desc {
+        display: none;
+      }
+
+      .legend {
+        display: none;
+      }
+
+      .legend-label {
+        color: #9a8263;
+        letter-spacing: 0.08em;
+      }
+
+      .role-filters {
+        margin-top: 12px;
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 8px 10px;
+      }
+
+      .role-filter-label {
+        color: #9a8263;
+        letter-spacing: 0.08em;
+        font-size: 11px;
+      }
+
+      .role-filter {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 4px 10px;
+        border: 1px solid #d7c3a7;
+        border-radius: 999px;
+        background: rgba(252, 246, 235, 0.86);
+        color: #6f5b43;
+        font-size: 11px;
+        line-height: 1;
+        user-select: none;
+      }
+
+      .role-filter input {
+        margin: 0;
+        accent-color: #9a5c24;
+      }
+
+      .role-filter-swatch {
+        width: 10px;
+        height: 10px;
+        border-radius: 999px;
+        box-shadow: 0 0 0 2px rgba(255, 248, 238, 0.92);
+        flex-shrink: 0;
+      }
+
+      .weight-dot {
+        display: inline-block;
+        border-radius: 4px;
+        margin-right: 6px;
+        vertical-align: middle;
+      }
+
+      .workspace {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(280px, 35vw);
+        gap: 14px;
+        align-items: start;
+      }
+
+      .tree-pane {
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+
+      .tree-toolbar {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 10px;
+        color: #896f51;
+        font-size: 11px;
+      }
+
+      .tree-toolbar-actions {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+      }
+
+      .tree-toolbar button {
+        border-radius: 999px;
+        padding: 3px 10px;
+        font: inherit;
+        cursor: pointer;
+      }
+
+      .tree-zoom-btn {
+        border: 1px solid #c9a67c;
+        background: #faf2e5;
+        color: #81552b;
+      }
+
+      .tree-reset-btn {
+        border: 1px solid #d5b58d;
+        background: #fff8ef;
+        color: #876649;
+      }
+
+      .tree-zoom-readout {
+        min-width: 46px;
+        text-align: center;
+        color: #7f6748;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .tree-scroll {
+        overflow: auto;
+        padding: 16px;
+        border: 1px solid #d9c6ab;
+        border-radius: 12px;
+        background: linear-gradient(160deg, rgba(252, 246, 235, 0.9), rgba(247, 238, 224, 0.9));
+        cursor: grab;
+      }
+
+      .branch {
+        display: flex;
+        align-items: flex-start;
+      }
+
+      .node {
+        position: relative;
+        border-radius: 10px;
+        line-height: 1.5;
+        cursor: pointer;
+        transition: transform 180ms ease, box-shadow 180ms ease, border-color 180ms ease, filter 180ms ease;
+      }
+
+      .node::before {
+        content: "";
+        position: absolute;
+        inset: -8px;
+        border-radius: 16px;
+        opacity: 0;
+        pointer-events: none;
+        box-shadow:
+          0 0 0 0 rgba(165, 97, 31, 0),
+          0 0 0 0 rgba(247, 229, 195, 0);
+        transition: opacity 180ms ease;
+      }
+
+      .node:hover {
+        transform: translateY(-1px);
+      }
+
+      .node.is-selected {
+        border-color: #93561f !important;
+        box-shadow:
+          0 0 0 2px rgba(147, 86, 31, 0.9),
+          0 0 0 5px rgba(247, 229, 195, 0.95),
+          0 10px 28px rgba(166, 104, 45, 0.34) !important;
+        transform: translateY(-1px) scale(1.014);
+        z-index: 2;
+      }
+
+      .node.is-selected::before {
+        opacity: 1;
+        animation: selected-halo-breathe 2.4s ease-in-out infinite;
+      }
+
+      .node.is-on-selected-path-node:not(.is-selected) {
+        border-color: color-mix(in srgb, var(--path-highlight) 70%, #d8bc98 30%) !important;
+        box-shadow:
+          0 0 0 2px rgba(180, 108, 34, 0.14),
+          0 8px 20px rgba(166, 104, 45, 0.14) !important;
+      }
+
+      .node.is-selected-entering {
+        animation: selected-node-enter 210ms cubic-bezier(0.18, 0.88, 0.32, 1.15);
+      }
+
+      .node.is-selected::after {
+        content: "Current";
+        position: absolute;
+        top: -10px;
+        right: -10px;
+        padding: 2px 6px;
+        border-radius: 999px;
+        font-size: 9px;
+        font-weight: 700;
+        letter-spacing: 0.03em;
+        color: #fff8ee;
+        background: #9a5c24;
+        box-shadow: 0 2px 8px rgba(120, 72, 26, 0.38);
+        pointer-events: none;
+      }
+
+      .role-marker {
+        position: absolute;
+        top: -6px;
+        left: -6px;
+        width: 12px;
+        height: 12px;
+        border-radius: 999px;
+        border: 2px solid rgba(255, 248, 238, 0.95);
+        box-shadow: 0 2px 8px rgba(95, 69, 40, 0.2);
+        opacity: 0;
+        transform: scale(0.72);
+        transition: opacity 160ms ease, transform 160ms ease;
+        pointer-events: none;
+        z-index: 3;
+      }
+
+      .role-marker.is-visible {
+        opacity: 1;
+        transform: scale(1);
+      }
+
+      .stem {
+        flex-shrink: 0;
+        transition: opacity 180ms ease, filter 180ms ease;
+      }
+
+      .children {
+        position: relative;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        padding-left: 0;
+      }
+
+      .child-row {
+        position: relative;
+        display: flex;
+        align-items: flex-start;
+        padding-left: 22px;
+      }
+
+      .elbow {
+        position: absolute;
+        top: 0;
+        left: 0;
+        flex-shrink: 0;
+        width: 22px;
+        height: 0;
+        transition: opacity 180ms ease, filter 180ms ease;
+      }
+
+      .children-rail {
+        position: absolute;
+        left: 0;
+        width: 0;
+        pointer-events: none;
+        transition: opacity 180ms ease, filter 180ms ease;
+      }
+
+      #tree-canvas.has-selection .stem.is-on-selected-path,
+      #tree-canvas.has-selection .children-rail-path.is-on-selected-path,
+      #tree-canvas.has-selection .child-row.is-on-selected-path > .elbow {
+        opacity: 1 !important;
+        filter: none !important;
+      }
+
+      #tree-canvas.has-selection .stem.is-on-selected-path {
+        border-top-color: var(--path-highlight) !important;
+        border-top-width: 3px !important;
+        box-shadow: 0 0 0 1px var(--path-highlight-soft), 0 0 10px var(--path-highlight-glow);
+      }
+
+      .children-rail-path {
+        display: none;
+        z-index: 1;
+        left: 0;
+        opacity: 1 !important;
+        filter: none !important;
+      }
+
+      #tree-canvas.has-selection .children-rail-path.is-on-selected-path {
+        border-left-color: var(--path-highlight) !important;
+        border-left-width: 2px !important;
+        box-shadow: 0 0 0 1px var(--path-highlight-soft), 0 0 8px var(--path-highlight-glow);
+      }
+
+      #tree-canvas.has-selection .child-row.is-on-selected-path > .elbow {
+        border-top-color: var(--path-highlight) !important;
+        border-top-width: 3px !important;
+        box-shadow: 0 0 8px var(--path-highlight-glow);
+      }
+
+      @keyframes selected-node-enter {
+        0% {
+          transform: translateY(0) scale(0.992);
+        }
+        58% {
+          transform: translateY(-2px) scale(1.026);
+        }
+        100% {
+          transform: translateY(-1px) scale(1.014);
+        }
+      }
+
+      @keyframes selected-halo-breathe {
+        0%,
+        100% {
+          box-shadow:
+            0 0 0 2px rgba(165, 97, 31, 0.16),
+            0 0 0 6px rgba(247, 229, 195, 0.18);
+        }
+        50% {
+          box-shadow:
+            0 0 0 4px rgba(165, 97, 31, 0.24),
+            0 0 0 10px rgba(247, 229, 195, 0.28);
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .node,
+        .stem,
+        .children-rail,
+        .elbow {
+          transition: none;
+        }
+
+        .node.is-selected::before,
+        .node.is-selected-entering {
+          animation: none !important;
+        }
+      }
+
+      .detail {
+        position: sticky;
+        top: 14px;
+        max-height: calc(100vh - 28px);
+        display: flex;
+        flex-direction: column;
+        border: 1px solid #d7c3a5;
+        border-radius: 12px;
+        background: linear-gradient(160deg, rgba(251, 245, 234, 0.96), rgba(246, 237, 222, 0.96));
+        box-shadow: 0 12px 26px rgba(104, 78, 45, 0.12);
+        overflow: hidden;
+      }
+
+      .detail-head {
+        padding: 12px 14px 10px;
+        border-bottom: 1px solid #dfccb1;
+      }
+
+      .detail-title {
+        margin: 0;
+        color: #83572b;
+        letter-spacing: 0.05em;
+        font-size: 15px;
+      }
+
+      .detail-meta {
+        margin-top: 6px;
+        color: #8b7558;
+        font-size: 11px;
+        line-height: 1.7;
+      }
+
+      .role-badge {
+        --role-color: #8f7554;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 2px 8px 2px 6px;
+        border-radius: 999px;
+        border: 1px solid color-mix(in srgb, var(--role-color) 42%, #ead7bc 58%);
+        background: rgba(255, 249, 241, 0.9);
+        color: #735940;
+        font-size: 10px;
+        line-height: 1.2;
+        vertical-align: middle;
+      }
+
+      .role-badge::before {
+        content: "";
+        width: 8px;
+        height: 8px;
+        border-radius: 999px;
+        background: var(--role-color);
+        box-shadow: 0 0 0 2px rgba(255, 248, 238, 0.9);
+        flex-shrink: 0;
+      }
+
+      .detail-meta .role-badge {
+        margin-right: 8px;
+      }
+
+      .detail-hint {
+        margin-top: 6px;
+        color: #896f51;
+        font-size: 11px;
+      }
+
+      .kbd {
+        border: 1px solid #be9f79;
+        border-bottom-width: 2px;
+        border-radius: 4px;
+        padding: 0 4px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 11px;
+        color: #725432;
+        background: #f7efdf;
+      }
+
+      .detail-body {
+        padding: 12px 14px;
+        overflow: auto;
+        line-height: 1.78;
+      }
+
+      .detail-paragraph {
+        border-radius: 8px;
+        padding: 3px 8px 3px 10px;
+        margin-bottom: 1px;
+        border: 1px solid transparent;
+        background: transparent;
+        transition: background-color 170ms ease, border-color 170ms ease, box-shadow 170ms ease;
+      }
+
+      .detail-paragraph:last-child {
+        margin-bottom: 0;
+      }
+
+      .detail-paragraph.is-clickable {
+        cursor: pointer;
+      }
+
+      .detail-paragraph p {
+        margin: 0;
+        color: #4a3b2b;
+        font-size: 13px;
+      }
+
+      .detail-paragraph.is-active {
+        background: rgba(208, 169, 115, 0.14);
+        border-color: rgba(176, 124, 56, 0.32);
+        box-shadow: inset 0 0 0 1px rgba(176, 124, 56, 0.12);
+      }
+
+      .detail-empty {
+        color: #91785a;
+        font-size: 12px;
+      }
+
+      #tooltip {
+        position: fixed;
+        width: min(460px, calc(100vw - 20px));
+        max-height: min(380px, calc(100vh - 24px));
+        overflow-y: auto;
+        border: 1px solid #d7c3a3;
+        border-radius: 10px;
+        background: rgba(252, 246, 236, 0.98);
+        box-shadow: 0 12px 32px rgba(94, 71, 42, 0.2);
+        padding: 14px;
+        z-index: 100;
+        display: none;
+      }
+
+      #tooltip .meta {
+        color: #90785a;
+        font-size: 11px;
+        margin-bottom: 10px;
+        border-bottom: 1px solid #e4d4bc;
+        padding-bottom: 6px;
+      }
+
+      #tooltip .node-meta {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 10px;
+      }
+
+      #tooltip .node-copy {
+        min-width: 0;
+        flex: 1;
+      }
+
+      #tooltip .node-kicker {
+        color: #907353;
+        font-size: 10px;
+        letter-spacing: 0.07em;
+        text-transform: uppercase;
+      }
+
+      #tooltip .node-title {
+        margin-top: 3px;
+        color: #5b4129;
+        font-size: 13px;
+        line-height: 1.5;
+        white-space: normal;
+        word-break: break-word;
+      }
+
+      #tooltip .range-meta {
+        color: #8f7554;
+        font-size: 10px;
+        white-space: nowrap;
+        padding-top: 2px;
+      }
+
+      #tooltip .node-role {
+        margin-top: 6px;
+      }
+
+      #tooltip p {
+        margin: 0 0 10px;
+        color: #4f3e2d;
+        line-height: 1.75;
+        font-size: 13px;
+      }
+
+      #tooltip p:last-child {
+        margin-bottom: 0;
+      }
+
+      @media (max-width: 980px) {
+        .workspace {
+          grid-template-columns: 1fr;
+        }
+
+        .detail {
+          position: static;
+          max-height: none;
+        }
+      }
+
+      @media (max-width: 720px) {
+        .page {
+          padding: 20px 12px 26px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="page">
+      <div class="header">
+        <div class="title-row">
+          <h1 id="title"></h1>
+          <span class="subtitle" id="subtitle"></span>
+        </div>
+        <p class="desc" id="desc"></p>
+        <div class="legend" id="legend"></div>
+        <div class="role-filters" id="role-filters" hidden></div>
+      </div>
+
+      <div class="workspace">
+        <div class="tree-pane">
+          <div class="tree-toolbar">
+            <span>Tree view: drag to pan, Ctrl/Cmd + wheel to zoom</span>
+            <div class="tree-toolbar-actions">
+              <button type="button" class="tree-zoom-btn" id="tree-zoom-out">-</button>
+              <div class="tree-zoom-readout" id="tree-zoom-readout">100%</div>
+              <button type="button" class="tree-zoom-btn" id="tree-zoom-in">+</button>
+              <button type="button" class="tree-reset-btn" id="tree-zoom-reset">Reset</button>
+            </div>
+          </div>
+
+          <div class="tree-scroll">
+            <div id="tree-canvas">
+              <div id="app"></div>
+            </div>
+          </div>
+        </div>
+
+        <aside class="detail" id="detail-panel">
+          <div class="detail-head">
+            <h2 class="detail-title" id="detail-title">No node selected</h2>
+            <div class="detail-meta" id="detail-meta"></div>
+            <div class="detail-hint">
+              Full text is shown on the right; selecting a node auto-focuses and highlights its paragraphs.<br />
+              Keyboard:
+              <span class="kbd">A</span> Parent
+              <span class="kbd">D</span> First child
+              <span class="kbd">W</span> Backward continuous (escalate on gap)
+              <span class="kbd">S</span> Forward continuous (escalate on gap)
+            </div>
+          </div>
+          <div class="detail-body" id="detail-body">
+            <div class="detail-empty">Loading source text...</div>
+          </div>
+        </aside>
+      </div>
+
+      <p class="footer" id="footer"></p>
+    </div>
+
+    <div id="tooltip"></div>
+    <script src="./data/source.js"></script>
+    <script src="./data/tree-data.js"></script>
+    <script src="./app.js"></script>
+  </body>
+</html>

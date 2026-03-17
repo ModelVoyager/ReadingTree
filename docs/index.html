@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Reading Tree Example</title>
+    <style>
+      :root {
+        --bg: #efe4d5;
+        --card: rgba(255, 250, 242, 0.9);
+        --line: #d7bea0;
+        --text: #433224;
+        --muted: #745f4a;
+        --accent: #9b5b24;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        font-family: Georgia, "Times New Roman", serif;
+        color: var(--text);
+        background:
+          radial-gradient(1200px 600px at 8% 0%, rgba(255, 248, 239, 0.95), transparent 62%),
+          linear-gradient(145deg, var(--bg), #e5d3bc);
+      }
+
+      main {
+        width: min(960px, calc(100vw - 32px));
+        margin: 0 auto;
+        padding: 40px 0 56px;
+      }
+
+      .hero {
+        margin-bottom: 22px;
+        padding: 28px;
+        border: 1px solid var(--line);
+        border-radius: 20px;
+        background: linear-gradient(160deg, rgba(255, 248, 238, 0.92), rgba(245, 233, 216, 0.92));
+        box-shadow: 0 18px 36px rgba(118, 84, 45, 0.1);
+      }
+
+      h1 {
+        margin: 0 0 10px;
+        font-size: clamp(28px, 4vw, 40px);
+        color: var(--accent);
+      }
+
+      .intro {
+        margin: 0;
+        color: var(--muted);
+        line-height: 1.8;
+      }
+
+      .grid {
+        display: grid;
+        gap: 16px;
+      }
+
+      .card {
+        display: block;
+        padding: 20px 22px;
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        background: var(--card);
+        color: inherit;
+        text-decoration: none;
+        box-shadow: 0 10px 24px rgba(109, 80, 47, 0.08);
+        transition: transform 180ms ease, box-shadow 180ms ease, border-color 180ms ease;
+      }
+
+      .card:hover {
+        transform: translateY(-2px);
+        border-color: #bf8c57;
+        box-shadow: 0 16px 30px rgba(109, 80, 47, 0.14);
+      }
+
+      .path {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 12px;
+        color: #8e724f;
+      }
+
+      h2 {
+        margin: 10px 0 6px;
+        font-size: clamp(22px, 3vw, 30px);
+      }
+
+      .subtitle {
+        color: #8e6a43;
+        letter-spacing: 0.08em;
+        font-size: 12px;
+        text-transform: uppercase;
+      }
+
+      .desc {
+        margin: 12px 0 0;
+        color: var(--muted);
+        line-height: 1.7;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <section class="hero">
+        <h1>Reading Tree Example</h1>
+        <p class="intro">
+          This is a static example reading-tree site published directly from the repo's
+          <code>docs/</code> folder.
+        </p>
+      </section>
+      <section class="grid">
+        <a class="card" href="./on-liberty-ch1-reading-tree/">
+          <div class="path">/on-liberty-ch1-reading-tree/</div>
+          <h2>On Liberty, Chapter 1</h2>
+          <div class="subtitle">Reading Tree</div>
+          <p class="desc">
+            An order-preserving outline of Mill's opening argument about the limits of social power.
+          </p>
+        </a>
+      </section>
+    </main>
+  </body>
+</html>
