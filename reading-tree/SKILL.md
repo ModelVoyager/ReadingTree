@@ -18,10 +18,11 @@ Produce a workspace that can build:
 
 - `site/data/source.js`
 - `site/data/tree-data.js`
-- a self-contained static interactive site in `site/`
+- a static interactive site in `site/`
 
 Shared tooling lives in `scripts/`.
 For online tools such as ChatGPT or Claude.ai that cannot serve the generated UI directly, provide the packaged `site/` folder and tell the user to open `site/index.html` in a browser.
+The default site template opens locally, but it is not fully self-contained in the strict offline/privacy sense: when online, it requests Google Fonts for typography. If those requests are blocked, the browser falls back to local serif fonts and the UI still works.
 
 The reusable workspace scaffold lives in `assets/workspace-template/`.
 
@@ -44,7 +45,7 @@ The reusable workspace scaffold lives in `assets/workspace-template/`.
 15. Rewrite every weak or semantically overstated label before continuing. Update the table until every row passes. Do not continue if even one row still fails.
 16. After the structure audit table and label audit table are both clean, run `python3 reading-tree/scripts/validate.py <workspace>` again as the required final validation pass.
 17. Run `python3 reading-tree/scripts/build.py <workspace> --step all`.
-18. To inspect or hand off the result, note that `site/index.html` can be opened directly in a browser, or `cd site/` and serve it with `python3 -m http.server 8000 --bind 127.0.0.1`. For online tools such as ChatGPT or Claude.ai that cannot serve the UI themselves, provide the packaged `site/` folder and instruct the user to open `site/index.html`.
+18. To inspect or hand off the result, note that `site/index.html` can be opened directly in a browser, or `cd site/` and serve it with `python3 -m http.server 8000 --bind 127.0.0.1`. For online tools such as ChatGPT or Claude.ai that cannot serve the UI themselves, provide the packaged `site/` folder and instruct the user to open `site/index.html`. Also mention that the default template requests Google Fonts when online; if those requests are blocked, the browser falls back to local serif fonts.
 19. If serving locally, tell the user to open `http://127.0.0.1:8000/` in a browser. Only launch a browser from the agent if the user explicitly asks for that.
 
 ## Non-Negotiable Rules

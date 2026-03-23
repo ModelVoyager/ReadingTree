@@ -36,6 +36,7 @@ Use the reading-tree skill in the uploaded zip to transform the uploaded article
 ```
 
 You will get a static site you can open locally, along with its `site/data/` folder.
+The default template is not fully self-contained in the strict offline/privacy sense: when online, it requests Google Fonts for typography. If those requests are blocked, the browser falls back to local serif fonts and the UI still works.
 
 For best results, use GPT-5.4 Thinking or newer in ChatGPT, or Claude Opus 4.6 or newer with extended thinking in Claude.ai.
 

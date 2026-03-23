@@ -7,7 +7,7 @@ The reusable workspace contains:
 - `article.txt`: the only source of original text; prefer one source paragraph per line, while preserving original paragraph boundaries unless a long paragraph is intentionally subdivided
 - `splits.json`: paragraph start lines only
 - `tree.json`: page metadata plus the outline tree
-- `site/`: the self-contained static interactive site, including generated data modules
+- `site/`: the static interactive site, including generated data modules
 
 The skill also contains shared tooling in `reading-tree/scripts/`:
 
@@ -70,6 +70,8 @@ Node fields:
 ## Serving
 
 After building, you can open `site/index.html` directly in a browser.
+
+The default template is not fully self-contained in the strict offline/privacy sense: when online, it requests Google Fonts for typography. If those requests are blocked, the browser falls back to local serif fonts and the UI remains usable.
 
 If you prefer a local server, serve `site/` with:
 
