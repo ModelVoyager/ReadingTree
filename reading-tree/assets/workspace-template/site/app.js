@@ -37,6 +37,7 @@ const TREE_VIEWPORT_BOTTOM_GUTTER = 20;
 const STACKED_LAYOUT_BREAKPOINT = 980;
 const TOOLTIP_SHOW_DELAY_MS = 1000;
 const TOOLTIP_HIDE_DELAY_MS = 180;
+const DETAIL_SCROLL_TOP_GUTTER = 4;
 const SEARCH_INPUT_DEBOUNCE_MS = 90;
 const SUGGESTION_LIMIT = 8;
 const ROLE_LABEL_OVERRIDES = {
@@ -1511,6 +1512,15 @@ function initDetailBodyWithSource() {
   });
 }
 
+function scrollDetailParagraphIntoView(paragraphEl, behavior = "smooth") {
+  if (!paragraphEl) return;
+
+  const lead = Math.max(DETAIL_SCROLL_TOP_GUTTER, Math.round(dom.detailBody.clientHeight * 0.22));
+  const maxTop = Math.max(0, dom.detailBody.scrollHeight - dom.detailBody.clientHeight);
+  const top = clamp(paragraphEl.offsetTop - lead, 0, maxTop);
+  dom.detailBody.scrollTo({ top, behavior });
+}
+
 function updateDetailRangeHighlight(range, shouldFocus) {
   state.detailParagraphEls.forEach((el) => el.classList.remove("is-active"));
 
@@ -1527,8 +1537,7 @@ function updateDetailRangeHighlight(range, shouldFocus) {
 
   if (shouldFocus) {
     const target = state.detailParagraphEls[start];
-    const top = Math.max(0, target.offsetTop - dom.detailBody.clientHeight * 0.22);
-    dom.detailBody.scrollTo({ top, behavior: "smooth" });
+    scrollDetailParagraphIntoView(target);
   }
 }
 
@@ -2029,8 +2038,7 @@ function focusSearchResult(index, shouldScroll = true) {
   if (shouldScroll && Number.isInteger(result.paragraphIndex)) {
     const paragraphEl = state.detailParagraphEls[result.paragraphIndex];
     if (paragraphEl) {
-      const top = Math.max(0, paragraphEl.offsetTop - dom.detailBody.clientHeight * 0.22);
-      dom.detailBody.scrollTo({ top, behavior: "smooth" });
+      scrollDetailParagraphIntoView(paragraphEl);
     }
   }
 
