@@ -37,7 +37,6 @@ const TREE_VIEWPORT_BOTTOM_GUTTER = 20;
 const STACKED_LAYOUT_BREAKPOINT = 980;
 const TOOLTIP_SHOW_DELAY_MS = 1000;
 const TOOLTIP_HIDE_DELAY_MS = 180;
-const DETAIL_SCROLL_TOP_GUTTER = 4;
 const SEARCH_INPUT_DEBOUNCE_MS = 90;
 const SUGGESTION_LIMIT = 8;
 const ROLE_LABEL_OVERRIDES = {
@@ -1515,9 +1514,11 @@ function initDetailBodyWithSource() {
 function scrollDetailParagraphIntoView(paragraphEl, behavior = "smooth") {
   if (!paragraphEl) return;
 
-  const lead = Math.max(DETAIL_SCROLL_TOP_GUTTER, Math.round(dom.detailBody.clientHeight * 0.22));
   const maxTop = Math.max(0, dom.detailBody.scrollHeight - dom.detailBody.clientHeight);
-  const top = clamp(paragraphEl.offsetTop - lead, 0, maxTop);
+  const bodyRect = dom.detailBody.getBoundingClientRect();
+  const paragraphRect = paragraphEl.getBoundingClientRect();
+  const topWithinBody = dom.detailBody.scrollTop + (paragraphRect.top - bodyRect.top);
+  const top = clamp(topWithinBody, 0, maxTop);
   dom.detailBody.scrollTo({ top, behavior });
 }
 
