@@ -31,8 +31,17 @@ const ZOOM_LIMITS = { min: 0.65, max: 1.8 };
 const ZOOM_BUTTON_STEP = 0.12;
 const ZOOM_WHEEL_STEP = 0.08;
 const TREE_PAN_THRESHOLD = 6;
+const TREE_VIEWPORT_MIN_HEIGHT = 240;
+const DETAIL_PANEL_MIN_HEIGHT = 260;
+const TREE_VIEWPORT_BOTTOM_GUTTER = 20;
+const STACKED_LAYOUT_BREAKPOINT = 980;
 const TOOLTIP_SHOW_DELAY_MS = 1000;
 const TOOLTIP_HIDE_DELAY_MS = 180;
+const SEARCH_INPUT_DEBOUNCE_MS = 90;
+const SUGGESTION_LIMIT = 8;
+const ROLE_LABEL_OVERRIDES = {
+  qa: "Q&A"
+};
 
 function getRequiredElement(id) {
   const el = document.getElementById(id);
@@ -92,17 +101,56 @@ function clamp(n, min, max) {
   return Math.max(min, Math.min(max, n));
 }
 
-function normalizeRole(value) {
-  if (typeof value !== "string") return "";
-  return value.trim();
+function normalizeWhitespace(value) {
+  return String(value || "").replace(/\s+/g, " ").trim();
 }
 
-function formatRoleLabel(role) {
-  return role
+function normalizeRoleSlug(value) {
+  return normalizeWhitespace(value)
+    .normalize("NFKC")
+    .toLowerCase()
+    .replaceAll("&", " and ")
+    .replace(/[\s_]+/g, "-")
+    .replace(/[^a-z0-9-]+/g, "-")
+    .replace(/-{2,}/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function normalizeDisplayText(value) {
+  return String(value || "")
+    .normalize("NFKC")
+    .replace(/[\u2018\u2019]/g, "'")
+    .replace(/[\u201c\u201d]/g, '"')
+    .replace(/\u00a0/g, " ");
+}
+
+function foldForMatch(value) {
+  return normalizeDisplayText(value).toLocaleLowerCase();
+}
+
+function formatRoleLabel(roleSlug) {
+  if (ROLE_LABEL_OVERRIDES[roleSlug]) {
+    return ROLE_LABEL_OVERRIDES[roleSlug];
+  }
+  return roleSlug
     .split(/[\s_-]+/)
     .filter(Boolean)
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(" ");
+}
+
+function normalizeRolesFromNode(node) {
+  const rawRoles = Array.isArray(node?.roles) ? node.roles : [];
+  const seen = new Set();
+  const roles = [];
+  rawRoles.forEach((rawRole) => {
+    if (typeof rawRole !== "string") return;
+    const slug = normalizeRoleSlug(rawRole);
+    if (!slug || seen.has(slug)) return;
+    seen.add(slug);
+    roles.push(slug);
+  });
+  return roles;
 }
 
 function roleColorAt(index) {
@@ -134,6 +182,345 @@ function rangeIncludes(range, index) {
   return isValidRange(range) && index >= range[0] && index <= range[1];
 }
 
+function compareOrderKey(a, b) {
+  const limit = Math.max(a.length, b.length);
+  for (let index = 0; index < limit; index += 1) {
+    const left = a[index] ?? 0;
+    const right = b[index] ?? 0;
+    if (left < right) return -1;
+    if (left > right) return 1;
+  }
+  return 0;
+}
+
+function mergeSpans(spans) {
+  if (!Array.isArray(spans) || spans.length === 0) return [];
+  const sorted = spans
+    .filter((span) => Number.isInteger(span.start) && Number.isInteger(span.end) && span.end > span.start)
+    .sort((a, b) => (a.start - b.start) || (b.end - a.end));
+  if (sorted.length === 0) return [];
+
+  const merged = [{ ...sorted[0] }];
+  for (let index = 1; index < sorted.length; index += 1) {
+    const current = sorted[index];
+    const previous = merged[merged.length - 1];
+    if (current.start <= previous.end && current.className === previous.className) {
+      previous.end = Math.max(previous.end, current.end);
+      continue;
+    }
+    if (current.start < previous.end) {
+      const clipped = { ...current, start: previous.end };
+      if (clipped.end > clipped.start) {
+        merged.push(clipped);
+      }
+      continue;
+    }
+    merged.push({ ...current });
+  }
+  return merged;
+}
+
+function renderMarkedHTML(text, spans) {
+  if (!Array.isArray(spans) || spans.length === 0) {
+    return escapeHTML(text);
+  }
+
+  const merged = mergeSpans(spans);
+  let cursor = 0;
+  let html = "";
+
+  merged.forEach((span) => {
+    const start = clamp(span.start, 0, text.length);
+    const end = clamp(span.end, start, text.length);
+    if (start > cursor) {
+      html += escapeHTML(text.slice(cursor, start));
+    }
+    html += `<mark class="${escapeHTML(span.className || "search-inline")}">${escapeHTML(text.slice(start, end))}</mark>`;
+    cursor = end;
+  });
+
+  if (cursor < text.length) {
+    html += escapeHTML(text.slice(cursor));
+  }
+
+  return html;
+}
+
+function findLiteralSpans(text, query) {
+  const needle = foldForMatch(query).trim();
+  if (!needle) return [];
+
+  const haystack = foldForMatch(text);
+  const spans = [];
+  let cursor = 0;
+
+  while (cursor < haystack.length) {
+    const foundAt = haystack.indexOf(needle, cursor);
+    if (foundAt === -1) break;
+    spans.push({ start: foundAt, end: foundAt + needle.length, className: "search-inline" });
+    cursor = foundAt + Math.max(1, needle.length);
+  }
+
+  return spans;
+}
+
+function buildSnippet(text, query, radius = 44) {
+  const spans = findLiteralSpans(text, query);
+  if (spans.length === 0) {
+    return { text: text.slice(0, radius * 2), spans: [] };
+  }
+  const first = spans[0];
+  const start = Math.max(0, first.start - radius);
+  const end = Math.min(text.length, first.end + radius);
+  const prefix = start > 0 ? "..." : "";
+  const suffix = end < text.length ? "..." : "";
+  return {
+    text: `${prefix}${text.slice(start, end)}${suffix}`,
+    spans: spans.map((span) => ({
+      start: span.start - start + prefix.length,
+      end: span.end - start + prefix.length,
+      className: span.className
+    }))
+  };
+}
+
+function buildSnippetFromSpans(text, rawSpans, radius = 44) {
+  const spans = mergeSpans(rawSpans);
+  if (spans.length === 0) {
+    return { text: text.slice(0, radius * 2), spans: [] };
+  }
+
+  const first = spans[0];
+  const start = Math.max(0, first.start - radius);
+  const end = Math.min(text.length, first.end + radius);
+  const prefix = start > 0 ? "..." : "";
+  const suffix = end < text.length ? "..." : "";
+
+  return {
+    text: `${prefix}${text.slice(start, end)}${suffix}`,
+    spans: spans
+      .filter((span) => span.end > start && span.start < end)
+      .map((span) => ({
+        start: Math.max(span.start, start) - start + prefix.length,
+        end: Math.min(span.end, end) - start + prefix.length,
+        className: span.className
+      }))
+  };
+}
+
+const SEARCH_REGEX_LITERAL_RE = /^\/(?:\\.|[^/])+\/[a-z]*$/;
+const SEARCH_REGEX_META_RE = /[\\^$.*+?()[\]{}|]/;
+const SEARCH_REGEX_FLAG_CHARS = new Set(["i", "m", "s", "u", "g", "y"]);
+
+function normalizeSearchRegexFlags(rawFlags, options = {}) {
+  const { global = false } = options;
+  const seen = new Set();
+  let normalized = "";
+
+  for (const flag of String(rawFlags || "")) {
+    if (!SEARCH_REGEX_FLAG_CHARS.has(flag)) {
+      throw new Error(`unsupported regex flag '${flag}'`);
+    }
+    if (flag === "g" || flag === "y") {
+      continue;
+    }
+    if (seen.has(flag)) {
+      continue;
+    }
+    seen.add(flag);
+    normalized += flag;
+  }
+
+  if (global) {
+    normalized += "g";
+  }
+
+  return normalized;
+}
+
+function parseSearchPattern(patternText) {
+  const raw = String(patternText || "");
+  const usesRegexSyntax = SEARCH_REGEX_META_RE.test(raw);
+
+  if (!raw) {
+    return {
+      source: raw,
+      flags: "",
+      usesRegexSyntax,
+      error: "empty regex pattern"
+    };
+  }
+
+  if (SEARCH_REGEX_LITERAL_RE.test(raw)) {
+    return {
+      source: raw,
+      flags: "",
+      usesRegexSyntax: true,
+      error: "slash-delimited regex literals are not supported; enter the regex directly and quote multi-word search"
+    };
+  }
+
+  try {
+    const flags = normalizeSearchRegexFlags("iu");
+    new RegExp(raw, flags);
+    return {
+      source: raw,
+      flags,
+      usesRegexSyntax,
+      error: null
+    };
+  } catch (error) {
+    return {
+      source: raw,
+      flags: "",
+      usesRegexSyntax: true,
+      error: error instanceof Error ? error.message : String(error)
+    };
+  }
+}
+
+function findRegexSpans(text, patternSpec) {
+  if (!patternSpec || patternSpec.error || !patternSpec.source) return [];
+
+  const haystack = normalizeDisplayText(text);
+  let regex;
+  try {
+    regex = new RegExp(patternSpec.source, normalizeSearchRegexFlags(patternSpec.flags, { global: true }));
+  } catch {
+    return [];
+  }
+
+  const spans = [];
+  let match;
+  while ((match = regex.exec(haystack))) {
+    const matchedText = String(match[0] || "");
+    if (!matchedText) {
+      regex.lastIndex += 1;
+      continue;
+    }
+    spans.push({
+      start: match.index,
+      end: match.index + matchedText.length,
+      className: "search-inline"
+    });
+  }
+  return spans;
+}
+
+function findClauseSpans(text, clause) {
+  if (!clause || clause.kind === "role") return [];
+  return findRegexSpans(text, clause.pattern);
+}
+
+function getTokenRanges(text) {
+  const tokens = [];
+  const regex = /[A-Za-z]+:"[^"]*"|"[^"]*"|\S+/g;
+  let match;
+  while ((match = regex.exec(text))) {
+    tokens.push({
+      start: match.index,
+      end: match.index + match[0].length,
+      value: match[0]
+    });
+  }
+  return tokens;
+}
+
+function getActiveTokenRange(text, cursor) {
+  const tokens = getTokenRanges(text);
+  for (const token of tokens) {
+    if (cursor >= token.start && cursor <= token.end) {
+      return token;
+    }
+  }
+  return { start: cursor, end: cursor, value: "" };
+}
+
+function quoteIfNeeded(value) {
+  return /\s/.test(value) ? `"${value}"` : value;
+}
+
+function buildFieldQueryToken(fieldName, rawValue) {
+  const value = normalizeWhitespace(rawValue);
+  if (!value) return `${fieldName}:`;
+  return `${fieldName}:${quoteIfNeeded(value)}`;
+}
+
+function stripOuterQuotes(value) {
+  return value.replace(/^"|"$/g, "");
+}
+
+function splitFieldPrefix(rawToken) {
+  const match = String(rawToken || "").match(/^([A-Za-z]+):(.*)$/i);
+  if (!match) return { field: null, value: rawToken };
+  const field = match[1].toLocaleLowerCase();
+  if (field !== "role") {
+    return { field: null, value: match[2] };
+  }
+  return {
+    field,
+    value: match[2]
+  };
+}
+
+function formatClauseText(clause) {
+  const base = quoteIfNeeded(clause.text);
+  return clause.field ? `${clause.field}:${base}` : base;
+}
+
+function parseQueryGroups(rawInput) {
+  const groups = [];
+  let currentGroup = [];
+
+  getTokenRanges(rawInput).forEach((token, index) => {
+    const rawToken = token.value;
+    if (rawToken === "OR") {
+      if (currentGroup.length > 0) {
+        groups.push(currentGroup);
+        currentGroup = [];
+      }
+      return;
+    }
+    if (rawToken === "AND") {
+      return;
+    }
+
+    const { field, value } = splitFieldPrefix(rawToken);
+    const text = normalizeWhitespace(stripOuterQuotes(value));
+    if (!text) return;
+    const pattern = field === "role" ? null : parseSearchPattern(text);
+    currentGroup.push({
+      id: `${index}:${text}`,
+      kind: field || "pattern",
+      field,
+      text,
+      normalized: field === "role" ? foldForMatch(text) : text,
+      pattern
+    });
+  });
+
+  if (currentGroup.length > 0) {
+    groups.push(currentGroup);
+  }
+
+  return groups;
+}
+
+function flattenQueryGroups(groups) {
+  return groups.flat();
+}
+
+function invalidSearchClauses() {
+  return flattenQueryGroups(state.search.queryGroups).filter((clause) => clause?.pattern?.error);
+}
+
+function reasonLabel(reason) {
+  if (reason === "role") return "Role match";
+  if (reason === "outline") return "Outline match";
+  if (reason === "text") return "Text match";
+  return "Match";
+}
+
 function visualWeight(weight, depth) {
   if (depth === 0) return 1;
   const [min, max] = weightDomain(depth);
@@ -150,18 +537,8 @@ function wTextFromVisual(v, depth) {
   return `hsl(24 ${sat}% ${light}%)`;
 }
 
-function wText(weight, depth) {
-  const v = depth == null ? clamp(weight, 0, 1) : visualWeight(weight, depth);
-  return wTextFromVisual(v, depth);
-}
-
 function wBorderFromVisual(v) {
   return `hsl(30 ${28 + v * 58}% ${72 - v * 36}%)`;
-}
-
-function wBorder(weight, depth) {
-  const v = depth == null ? clamp(weight, 0, 1) : visualWeight(weight, depth);
-  return wBorderFromVisual(v);
 }
 
 function wBgFromVisual(v, depth) {
@@ -171,18 +548,9 @@ function wBgFromVisual(v, depth) {
   return `hsl(36 ${sat}% ${light}%)`;
 }
 
-function wBg(weight, depth) {
-  const v = depth == null ? clamp(weight, 0, 1) : visualWeight(weight, depth);
-  return wBgFromVisual(v, depth);
-}
-
 function nodePaddingFromVisual(v, depth) {
   if (depth === 0) return [14 + v * 3, 24 + v * 8];
   return [8 + v * 3, 11 + v * 12];
-}
-
-function nodePadding(weight, depth) {
-  return nodePaddingFromVisual(visualWeight(weight, depth), depth);
 }
 
 function nodeFontFromVisual(v, depth) {
@@ -190,19 +558,11 @@ function nodeFontFromVisual(v, depth) {
   return base + v * (depth === 0 ? 5.6 : depth === 1 ? 3.0 : depth === 2 ? 1.8 : 1.4);
 }
 
-function nodeFont(weight, depth) {
-  return nodeFontFromVisual(visualWeight(weight, depth), depth);
-}
-
 function nodeHeightFromVisual(v, depth) {
   const emphasis = Math.pow(v, 0.82);
   const base = depth === 0 ? 96 : depth === 1 ? 54 : depth === 2 ? 44 : 34;
   const gain = depth === 0 ? 80 : depth === 1 ? 76 : depth === 2 ? 68 : 58;
   return Math.round(base + emphasis * gain);
-}
-
-function nodeHeight(weight, depth) {
-  return nodeHeightFromVisual(visualWeight(weight, depth), depth);
 }
 
 function nodeLabelLines(depth) {
@@ -217,15 +577,11 @@ function nodeWidthFromVisual(v, depth) {
   return Math.round(276 + v * 58);
 }
 
-function nodeWidth(weight, depth) {
-  return nodeWidthFromVisual(visualWeight(weight, depth), depth);
-}
-
 function buildTreeMeta(rootNode, paragraphCount) {
   const nodes = new Map();
   const levelOrder = new Map();
   const pathLabels = new Map();
-  const paragraphWinners = Array.from({ length: paragraphCount }, () => null);
+  const paragraphCandidates = Array.from({ length: paragraphCount }, () => []);
 
   function registerParagraphCandidate(id, depth, range) {
     if (!isValidRange(range) || paragraphCount === 0) return;
@@ -235,14 +591,7 @@ function buildTreeMeta(rootNode, paragraphCount) {
     const end = Math.min(paragraphCount - 1, range[1]);
 
     for (let idx = start; idx <= end; idx += 1) {
-      const current = paragraphWinners[idx];
-      if (
-        !current ||
-        candidate.depth > current.depth ||
-        (candidate.depth === current.depth && candidate.span < current.span)
-      ) {
-        paragraphWinners[idx] = candidate;
-      }
+      paragraphCandidates[idx].push(candidate);
     }
   }
 
@@ -250,7 +599,7 @@ function buildTreeMeta(rootNode, paragraphCount) {
     const id = parentId === null ? "0" : `${parentId}.${siblingIndex}`;
     const children = Array.isArray(node.children) ? node.children : [];
     const idsAtDepth = getOrCreateList(levelOrder, depth);
-    const explicitRole = normalizeRole(node?.role);
+    const roles = normalizeRolesFromNode(node);
     const meta = {
       id,
       node,
@@ -258,7 +607,8 @@ function buildTreeMeta(rootNode, paragraphCount) {
       depth,
       orderIndex: idsAtDepth.length,
       childrenIds: [],
-      explicitRole
+      roles,
+      primaryRole: roles[0] || ""
     };
 
     idsAtDepth.push(id);
@@ -278,29 +628,38 @@ function buildTreeMeta(rootNode, paragraphCount) {
 
   const rootId = walk(rootNode, null, 0, 0, []);
   const paragraphToNode = new Map();
+  const paragraphCandidatesByIndex = new Map();
 
-  paragraphWinners.forEach((winner, index) => {
-    if (winner) {
-      paragraphToNode.set(index, winner.id);
+  paragraphCandidates.forEach((candidates, index) => {
+    candidates.sort((a, b) => {
+      if (b.depth !== a.depth) return b.depth - a.depth;
+      if (a.span !== b.span) return a.span - b.span;
+      return a.id.localeCompare(b.id);
+    });
+    paragraphCandidatesByIndex.set(index, candidates.map((candidate) => candidate.id));
+    if (candidates[0]) {
+      paragraphToNode.set(index, candidates[0].id);
     }
   });
 
-  return { nodes, rootId, levelOrder, pathLabels, paragraphToNode };
+  return { nodes, rootId, levelOrder, pathLabels, paragraphToNode, paragraphCandidatesByIndex };
 }
 
 function buildRoleMeta(nodes) {
   const roles = [...new Set(
     [...nodes.values()]
-      .map((meta) => meta.explicitRole)
+      .flatMap((meta) => meta.roles)
       .filter(Boolean)
   )].sort((a, b) => a.localeCompare(b));
 
   const roleMeta = new Map();
   roles.forEach((role, index) => {
+    const nodeCount = [...nodes.values()].filter((meta) => meta.roles.includes(role)).length;
     roleMeta.set(role, {
       key: role,
       label: formatRoleLabel(role),
-      color: roleColorAt(index)
+      color: roleColorAt(index),
+      nodeCount
     });
   });
   return roleMeta;
@@ -453,7 +812,15 @@ const dom = {
   pageDesc: getRequiredElement("desc"),
   pageFooter: getRequiredElement("footer"),
   legend: getRequiredElement("legend"),
-  roleFilters: getRequiredElement("role-filters"),
+  searchShell: getRequiredElement("search-shell"),
+  searchInput: getRequiredElement("search-input"),
+  searchSuggestions: getRequiredElement("search-suggestions"),
+  searchCount: getRequiredElement("search-count"),
+  searchSummary: getRequiredElement("search-summary"),
+  searchPrevBtn: getRequiredElement("search-prev"),
+  searchNextBtn: getRequiredElement("search-next"),
+  searchClearBtn: getRequiredElement("search-clear"),
+  detailPanel: getRequiredElement("detail-panel"),
   detailTitle: getRequiredElement("detail-title"),
   detailMeta: getRequiredElement("detail-meta"),
   detailBody: getRequiredElement("detail-body")
@@ -465,20 +832,27 @@ const ROOT_NODE_ID = treeMeta.rootId;
 const LEVEL_ORDER = treeMeta.levelOrder;
 const NODE_PATH_LABEL = treeMeta.pathLabels;
 const PARAGRAPH_TO_NODE = treeMeta.paragraphToNode;
+const PARAGRAPH_CANDIDATES = treeMeta.paragraphCandidatesByIndex;
 const ROLE_META = buildRoleMeta(NODE_INDEX);
 const WEIGHT_DOMAINS = buildWeightDomains(NODE_INDEX);
 const NODE_VISUAL_WEIGHTS = buildNodeVisualWeights(NODE_INDEX, ROOT_NODE_ID);
 const NODE_SIBLING_VISUALS = buildSiblingVisualProfiles(NODE_INDEX);
+const NODE_LIST = [...NODE_INDEX.values()].sort((a, b) => {
+  const left = a.node?.range?.[0] ?? 0;
+  const right = b.node?.range?.[0] ?? 0;
+  return left - right || a.depth - b.depth || a.id.localeCompare(b.id);
+});
 
 const state = {
   selectedNodeId: "",
   nodeDomMap: new Map(),
-  nodeRoleMarkerMap: new Map(),
+  nodeLabelDomMap: new Map(),
   connectorDomMap: new Map(),
   highlightedConnectorEls: [],
   highlightedPathNodeEls: [],
   detailParagraphEls: [],
-  activeRoleFilters: new Set(),
+  detailParagraphTextEls: [],
+  detailParagraphReasonEls: [],
   tooltip: {
     hideTimer: null,
     showTimer: null,
@@ -489,7 +863,19 @@ const state = {
   treeZoom: 1,
   treePan: createTreePanState(),
   suppressTreeClick: false,
-  suppressTreeClickTimer: null
+  suppressTreeClickTimer: null,
+  searchDebounceTimer: null,
+  search: {
+    rawInput: "",
+    queryGroups: [],
+    suggestions: [],
+    suggestionsOpen: false,
+    activeSuggestionIndex: -1,
+    results: [],
+    focusedResultIndex: -1,
+    nodeMatches: new Map(),
+    paragraphMatches: new Map()
+  }
 };
 
 function initPageChrome() {
@@ -512,16 +898,51 @@ function initPageChrome() {
   document.title = PAGE_TITLE;
 }
 
-function getRoleInfo(meta) {
-  if (!meta?.explicitRole) return null;
-  const role = ROLE_META.get(meta.explicitRole);
-  if (!role) return null;
-  return role;
+function getRoleInfo(roleKey) {
+  return ROLE_META.get(roleKey) || null;
 }
 
-function roleBadgeHTML(roleInfo) {
+function roleMatchesClause(roleKey, clause) {
+  const roleInfo = getRoleInfo(roleKey);
+  const haystacks = [roleKey, roleInfo?.label || ""].map((value) => foldForMatch(value));
+  return haystacks.some((haystack) => haystack.includes(clause.normalized));
+}
+
+function getRoleInfos(meta) {
+  return (meta?.roles || [])
+    .map((roleKey) => getRoleInfo(roleKey))
+    .filter(Boolean);
+}
+
+function isRoleActive(roleKey) {
+  const roleInfo = getRoleInfo(roleKey);
+  const haystacks = [roleKey, roleInfo?.label || ""].map((value) => foldForMatch(value)).filter(Boolean);
+  return flattenQueryGroups(state.search.queryGroups).some((clause) => {
+    if (clause.kind === "role") {
+      return roleMatchesClause(roleKey, clause);
+    }
+    return haystacks.includes(clause.normalized);
+  });
+}
+
+function roleBadgeHTML(roleKey, interactive = true) {
+  const roleInfo = getRoleInfo(roleKey);
   if (!roleInfo) return "";
-  return `<span class="role-badge" style="--role-color: ${roleInfo.color}">${escapeHTML(roleInfo.label)}</span>`;
+  const className = [
+    "role-badge",
+    interactive ? "is-clickable" : "",
+    isRoleActive(roleKey) ? "is-active" : ""
+  ].filter(Boolean).join(" ");
+  if (interactive) {
+    return `<button type="button" class="${className}" data-role="${escapeHTML(roleKey)}" style="--role-color: ${roleInfo.color}">${escapeHTML(roleInfo.label)}</button>`;
+  }
+  return `<span class="${className}" style="--role-color: ${roleInfo.color}">${escapeHTML(roleInfo.label)}</span>`;
+}
+
+function roleBadgeGroupHTML(roleKeys, interactive = true, extraClassName = "") {
+  if (!Array.isArray(roleKeys) || roleKeys.length === 0) return "";
+  const className = ["role-badge-row", extraClassName].filter(Boolean).join(" ");
+  return `<div class="${className}">${roleKeys.map((roleKey) => roleBadgeHTML(roleKey, interactive)).join("")}</div>`;
 }
 
 function updateTreeZoomReadout() {
@@ -533,6 +954,27 @@ function syncTreeCanvasSize() {
   const height = dom.appRoot.offsetHeight;
   dom.treeCanvas.style.width = width ? `${width * state.treeZoom}px` : "max-content";
   dom.treeCanvas.style.height = height ? `${height * state.treeZoom}px` : "auto";
+}
+
+function syncTreeViewportHeight() {
+  if (window.innerWidth <= STACKED_LAYOUT_BREAKPOINT) {
+    dom.treeViewport.style.maxHeight = "";
+    dom.detailPanel.style.maxHeight = "";
+    return;
+  }
+
+  const syncPanelHeight = (panelEl, minHeight) => {
+    const rect = panelEl.getBoundingClientRect();
+    const available = clamp(
+      Math.floor(window.innerHeight - Math.max(rect.top, 0) - TREE_VIEWPORT_BOTTOM_GUTTER),
+      minHeight,
+      Math.max(minHeight, window.innerHeight - TREE_VIEWPORT_BOTTOM_GUTTER)
+    );
+    panelEl.style.maxHeight = `${available}px`;
+  };
+
+  syncPanelHeight(dom.treeViewport, TREE_VIEWPORT_MIN_HEIGHT);
+  syncPanelHeight(dom.detailPanel, DETAIL_PANEL_MIN_HEIGHT);
 }
 
 function clearTooltipHideTimer() {
@@ -577,7 +1019,6 @@ function writeTooltipContent(nodeId, range) {
   const textList = SOURCE.slice(start, end + 1);
   const meta = NODE_INDEX.get(nodeId);
   const title = meta?.node?.label || "Node Reference";
-  const roleInfo = getRoleInfo(meta);
   const childCount = meta?.childrenIds?.length ?? 0;
   const paragraphs = textList.map((text) => `<p>${escapeHTML(text)}</p>`).join("");
 
@@ -586,7 +1027,7 @@ function writeTooltipContent(nodeId, range) {
       `<div class="node-copy">` +
         `<div class="node-kicker">Node</div>` +
         `<div class="node-title">${escapeHTML(title)}</div>` +
-        (roleInfo ? `<div class="node-role">${roleBadgeHTML(roleInfo)}</div>` : "") +
+        roleBadgeGroupHTML(meta?.roles || []) +
       `</div>` +
       `<div class="range-meta">Paragraphs ${start}–${end}` +
         (childCount > 0 ? ` | ${childCount} children` : ` | Leaf`) +
@@ -680,6 +1121,13 @@ function updateTooltipHover(event, range) {
 function initTooltip() {
   dom.tooltip.addEventListener("mouseenter", keepTooltipAlive);
   dom.tooltip.addEventListener("mouseleave", releaseTooltip);
+  dom.tooltip.addEventListener("click", (event) => {
+    const roleBadge = event.target.closest("[data-role]");
+    if (!roleBadge) return;
+    event.preventDefault();
+    const roleInfo = getRoleInfo(roleBadge.dataset.role);
+    appendSearchTerm(roleInfo?.label || formatRoleLabel(roleBadge.dataset.role), { prefix: "role" });
+  });
 }
 
 function setTreeZoom(nextZoom) {
@@ -812,7 +1260,6 @@ function createNodeCard(nodeId) {
   const node = meta.node;
   const depth = meta.depth;
   const weight = node.weight ?? 0.5;
-  const roleInfo = getRoleInfo(meta);
   const vWeight = nodeVisualWeight(nodeId, weight, depth);
   const siblingVisual = nodeSiblingVisual(nodeId);
   const localStrength = depth === 0 ? 0 : siblingVisual.strength;
@@ -851,15 +1298,8 @@ function createNodeCard(nodeId) {
     minHeight: `${boxHeight}px`
   });
 
-  if (roleInfo) {
-    const marker = createElement("div", "role-marker");
-    marker.style.background = roleInfo.color;
-    marker.title = `Role: ${roleInfo.label}`;
-    card.appendChild(marker);
-    state.nodeRoleMarkerMap.set(nodeId, marker);
-  }
-
-  const label = createElement("div");
+  const label = createElement("div", "node-label");
+  label.dataset.nodeId = nodeId;
   label.textContent = node.label;
   label.style.lineHeight = "1.45";
   applyLineClamp(label, nodeLabelLines(depth));
@@ -871,6 +1311,7 @@ function createNodeCard(nodeId) {
   card.addEventListener("click", () => setSelectedNode(nodeId, true));
 
   state.nodeDomMap.set(nodeId, card);
+  state.nodeLabelDomMap.set(nodeId, label);
   return card;
 }
 
@@ -903,6 +1344,26 @@ function getCenterYWithin(containerEl, targetEl) {
   const containerRect = containerEl.getBoundingClientRect();
   const targetRect = targetEl.getBoundingClientRect();
   return (targetRect.top - containerRect.top + targetRect.height / 2) / state.treeZoom;
+}
+
+function centerElementInScrollContainer(containerEl, targetEl, behavior = "smooth") {
+  if (!containerEl || !targetEl) return;
+
+  const contentRootEl = dom.appRoot;
+  if (!contentRootEl) return;
+
+  const rootRect = contentRootEl.getBoundingClientRect();
+  const targetRect = targetEl.getBoundingClientRect();
+  const targetLeft = (targetRect.left - rootRect.left) + targetRect.width / 2 - containerEl.clientWidth / 2;
+  const targetTop = (targetRect.top - rootRect.top) + targetRect.height / 2 - containerEl.clientHeight / 2;
+  const maxLeft = Math.max(0, containerEl.scrollWidth - containerEl.clientWidth);
+  const maxTop = Math.max(0, containerEl.scrollHeight - containerEl.clientHeight);
+
+  containerEl.scrollTo({
+    left: clamp(targetLeft, 0, maxLeft),
+    top: clamp(targetTop, 0, maxTop),
+    behavior
+  });
 }
 
 function positionSelectedPathSegment(parentConnectors, childId) {
@@ -1006,72 +1467,11 @@ function createLegend() {
     const dot = createElement("span", "weight-dot");
     dot.style.width = `${8 + Math.pow(item.w, 0.75) * 22}px`;
     dot.style.height = `${8 + Math.pow(item.w, 0.75) * 14}px`;
-    dot.style.border = `1px solid ${wBorder(item.w)}`;
-    dot.style.background = wBg(item.w);
+    dot.style.border = `1px solid ${wBorderFromVisual(item.w)}`;
+    dot.style.background = wBgFromVisual(item.w, 1);
     unit.appendChild(dot);
     unit.appendChild(document.createTextNode(item.label));
     dom.legend.appendChild(unit);
-  });
-}
-
-function updateRoleVisualMarks() {
-  const hasActiveFilters = state.activeRoleFilters.size > 0;
-
-  state.nodeRoleMarkerMap.forEach((marker, nodeId) => {
-    const meta = NODE_INDEX.get(nodeId);
-    const visible =
-      hasActiveFilters &&
-      Boolean(meta?.explicitRole) &&
-      state.activeRoleFilters.has(meta.explicitRole);
-
-    marker.classList.toggle("is-visible", visible);
-  });
-}
-
-function setRoleFilter(role, enabled) {
-  if (enabled) {
-    state.activeRoleFilters.add(role);
-  } else {
-    state.activeRoleFilters.delete(role);
-  }
-  updateRoleVisualMarks();
-}
-
-function createRoleFilter(role, roleInfo) {
-  const label = createElement("label", "role-filter");
-
-  const checkbox = createElement("input");
-  checkbox.type = "checkbox";
-  checkbox.addEventListener("change", () => setRoleFilter(role, checkbox.checked));
-
-  const swatch = createElement("span", "role-filter-swatch");
-  swatch.style.background = roleInfo.color;
-
-  const text = createElement("span");
-  text.textContent = roleInfo.label;
-
-  label.appendChild(checkbox);
-  label.appendChild(swatch);
-  label.appendChild(text);
-  return label;
-}
-
-function initRoleFilters() {
-  dom.roleFilters.textContent = "";
-
-  if (ROLE_META.size === 0) {
-    dom.roleFilters.hidden = true;
-    return;
-  }
-
-  dom.roleFilters.hidden = false;
-
-  const label = createElement("span", "role-filter-label");
-  label.textContent = "Role Visual Marks";
-  dom.roleFilters.appendChild(label);
-
-  ROLE_META.forEach((roleInfo, role) => {
-    dom.roleFilters.appendChild(createRoleFilter(role, roleInfo));
   });
 }
 
@@ -1086,21 +1486,28 @@ function createDetailParagraph(text, index) {
     item.addEventListener("click", () => setSelectedNode(targetNodeId, true));
   }
 
-  const paragraph = createElement("p");
+  const reasons = createElement("div", "detail-paragraph-reasons");
+  const paragraph = createElement("p", "detail-paragraph-text");
   paragraph.textContent = text;
+
+  item.appendChild(reasons);
   item.appendChild(paragraph);
 
-  return item;
+  return { item, reasons, paragraph };
 }
 
 function initDetailBodyWithSource() {
   dom.detailBody.innerHTML = "";
   state.detailParagraphEls.length = 0;
+  state.detailParagraphTextEls.length = 0;
+  state.detailParagraphReasonEls.length = 0;
 
   SOURCE.forEach((text, index) => {
-    const item = createDetailParagraph(text, index);
-    dom.detailBody.appendChild(item);
-    state.detailParagraphEls.push(item);
+    const detail = createDetailParagraph(text, index);
+    dom.detailBody.appendChild(detail.item);
+    state.detailParagraphEls.push(detail.item);
+    state.detailParagraphTextEls.push(detail.paragraph);
+    state.detailParagraphReasonEls.push(detail.reasons);
   });
 }
 
@@ -1225,7 +1632,6 @@ function renderSelectedNodeDetail(nodeId, shouldFocus) {
   const node = meta.node;
   const range = isValidRange(node.range) ? node.range : [0, 0];
   const [start, end] = range;
-  const roleInfo = getRoleInfo(meta);
 
   dom.detailTitle.textContent = node.label;
   const metaParts = [
@@ -1236,13 +1642,9 @@ function renderSelectedNodeDetail(nodeId, shouldFocus) {
     meta.childrenIds.length > 0 ? `Children: ${meta.childrenIds.length}` : "Leaf"
   ];
 
-  if (roleInfo) {
-    metaParts.push(`Role: ${roleInfo.label}`);
-  }
-
   dom.detailMeta.innerHTML =
-    (roleInfo ? `${roleBadgeHTML(roleInfo)} ` : "") +
-    escapeHTML(metaParts.join(" | "));
+    roleBadgeGroupHTML(meta.roles) +
+    `<div class="detail-meta-copy">${escapeHTML(metaParts.join(" | "))}</div>`;
 
   updateDetailRangeHighlight(range, shouldFocus);
 }
@@ -1265,7 +1667,7 @@ function setSelectedNode(nodeId, shouldScrollIntoView) {
     selectedEl.classList.add("is-selected");
     triggerSelectedNodeEnter(selectedEl);
     if (shouldScrollIntoView) {
-      selectedEl.scrollIntoView({ block: "center", inline: "center", behavior: "smooth" });
+      centerElementInScrollContainer(dom.treeViewport, selectedEl, "smooth");
     }
   }
 
@@ -1298,6 +1700,708 @@ function pickContinuousLevelNode(offset) {
   }
 
   return null;
+}
+
+function pickSupportingNodeForParagraph(paragraphIndex) {
+  const candidateIds = PARAGRAPH_CANDIDATES.get(paragraphIndex) || [];
+  return candidateIds[0] || null;
+}
+
+function ensureParagraphMatch(index) {
+  const existing = state.search.paragraphMatches.get(index);
+  if (existing) return existing;
+  const created = {
+    spans: [],
+    reasons: new Set(),
+    nodeIds: new Set()
+  };
+  state.search.paragraphMatches.set(index, created);
+  return created;
+}
+
+function ensureNodeMatch(nodeId) {
+  const existing = state.search.nodeMatches.get(nodeId);
+  if (existing) return existing;
+  const created = {
+    labelSpans: [],
+    reasons: new Set(),
+    supportParagraphs: new Set()
+  };
+  state.search.nodeMatches.set(nodeId, created);
+  return created;
+}
+
+function applyNodeRangeReason(nodeId, reason) {
+  const meta = NODE_INDEX.get(nodeId);
+  if (!meta || !isValidRange(meta.node.range)) return;
+  for (let index = meta.node.range[0]; index <= meta.node.range[1]; index += 1) {
+    const paragraphMatch = ensureParagraphMatch(index);
+    paragraphMatch.reasons.add(reason);
+    paragraphMatch.nodeIds.add(nodeId);
+  }
+}
+
+function applyExactSearch() {
+  const { queryGroups } = state.search;
+  if (queryGroups.length === 0) return;
+
+  NODE_LIST.forEach((meta) => {
+    const labelSpans = [];
+    const reasons = new Set();
+    let isDirectMatch = false;
+
+    queryGroups.forEach((group) => {
+      const groupLabelSpans = [];
+      const groupReasons = new Set();
+      const groupSatisfied = group.every((clause) => {
+        const clauseAllowsOutline = clause.kind !== "role";
+        const clauseLabelSpans = clauseAllowsOutline ? findClauseSpans(meta.node.label, clause) : [];
+        const clauseRoleMatched = meta.roles.some((roleKey) => roleMatchesClause(roleKey, clause));
+        if (clauseLabelSpans.length > 0) {
+          groupLabelSpans.push(...clauseLabelSpans);
+          groupReasons.add("outline");
+        }
+        if (clauseRoleMatched) {
+          groupReasons.add("role");
+        }
+        return clauseLabelSpans.length > 0 || clauseRoleMatched;
+      });
+
+      if (!groupSatisfied) return;
+      isDirectMatch = true;
+      labelSpans.push(...groupLabelSpans);
+      groupReasons.forEach((reason) => reasons.add(reason));
+    });
+
+    if (!isDirectMatch) return;
+
+    const match = ensureNodeMatch(meta.id);
+    reasons.forEach((reason) => match.reasons.add(reason));
+    match.labelSpans.push(...labelSpans);
+
+    if (reasons.has("outline")) {
+      applyNodeRangeReason(meta.id, "outline");
+    } else if (reasons.has("role")) {
+      applyNodeRangeReason(meta.id, "role");
+    }
+
+    state.search.results.push({
+      id: `node:${meta.id}`,
+      kind: "node",
+      nodeId: meta.id,
+      paragraphIndex: isValidRange(meta.node.range) ? meta.node.range[0] : null,
+      orderKey: [meta.node.range?.[0] ?? 10 ** 6, 1, meta.depth],
+      reason: reasons.has("outline") ? "outline" : "role"
+    });
+  });
+
+  SOURCE.forEach((text, index) => {
+    const supportingNodeId = pickSupportingNodeForParagraph(index);
+    if (!supportingNodeId) return;
+    const supportingMeta = NODE_INDEX.get(supportingNodeId);
+    const allSpans = [];
+    const paragraphReasons = new Set();
+    let matchedAnyGroup = false;
+
+    queryGroups.forEach((group) => {
+      const groupSpans = [];
+      const groupReasons = new Set();
+      const groupSatisfied = group.every((clause) => {
+        const clauseAllowsText = clause.kind !== "role";
+        const clauseTextSpans = clauseAllowsText ? findClauseSpans(text, clause) : [];
+        const clauseRoleMatched = (supportingMeta?.roles || []).some((roleKey) => roleMatchesClause(roleKey, clause));
+
+        if (clauseTextSpans.length > 0) {
+          groupSpans.push(...clauseTextSpans);
+          groupReasons.add("text");
+        }
+        if (clauseRoleMatched) {
+          groupReasons.add("role");
+        }
+
+        return clauseTextSpans.length > 0 || clauseRoleMatched;
+      });
+
+      if (!groupSatisfied) return;
+      matchedAnyGroup = true;
+      allSpans.push(...groupSpans);
+      groupReasons.forEach((reason) => paragraphReasons.add(reason));
+    });
+
+    if (!matchedAnyGroup) return;
+
+    const paragraphMatch = ensureParagraphMatch(index);
+    paragraphMatch.spans.push(...allSpans);
+    paragraphReasons.forEach((reason) => paragraphMatch.reasons.add(reason));
+    paragraphMatch.nodeIds.add(supportingNodeId);
+
+    const nodeMatch = ensureNodeMatch(supportingNodeId);
+    if (paragraphReasons.has("text")) {
+      nodeMatch.reasons.add("text");
+    }
+    if (paragraphReasons.has("role") && !paragraphReasons.has("text")) {
+      nodeMatch.reasons.add("role");
+    }
+    nodeMatch.supportParagraphs.add(index);
+
+    state.search.results.push({
+      id: `paragraph:${index}`,
+      kind: "paragraph",
+      nodeId: supportingNodeId,
+      paragraphIndex: index,
+      orderKey: [index, 0, 0],
+      reason: paragraphReasons.has("text") ? "text" : "role"
+    });
+  });
+}
+
+function searchReasonRank(reason) {
+  if (reason === "text") return 0;
+  if (reason === "outline") return 1;
+  if (reason === "role") return 2;
+  return 9;
+}
+
+function collapseSearchResultsByNode() {
+  const grouped = new Map();
+
+  state.search.results.forEach((result) => {
+    const key = result.nodeId || result.id;
+    const existing = grouped.get(key) || {
+      id: result.nodeId ? `node:${result.nodeId}` : result.id,
+      nodeId: result.nodeId,
+      paragraphIndices: [],
+      reasons: new Set()
+    };
+
+    if (Number.isInteger(result.paragraphIndex)) {
+      existing.paragraphIndices.push(result.paragraphIndex);
+    }
+    if (result.reason) {
+      existing.reasons.add(result.reason);
+    }
+    grouped.set(key, existing);
+  });
+
+  state.search.results = [...grouped.values()].map((group) => {
+    const meta = group.nodeId ? NODE_INDEX.get(group.nodeId) : null;
+    const nodeMatch = group.nodeId ? state.search.nodeMatches.get(group.nodeId) : null;
+    const supportParagraphs = nodeMatch ? [...nodeMatch.supportParagraphs].sort((a, b) => a - b) : [];
+    const paragraphIndices = [...new Set(group.paragraphIndices)].sort((a, b) => a - b);
+    const paragraphIndex =
+      supportParagraphs[0] ??
+      paragraphIndices[0] ??
+      (isValidRange(meta?.node?.range) ? meta.node.range[0] : null);
+    const reasons = [...group.reasons].sort((left, right) => searchReasonRank(left) - searchReasonRank(right));
+
+    return {
+      id: group.id,
+      kind: "node",
+      nodeId: group.nodeId,
+      paragraphIndex,
+      orderKey: [
+        paragraphIndex ?? meta?.node?.range?.[0] ?? 10 ** 6,
+        meta?.depth ?? 0,
+        meta?.orderIndex ?? 0
+      ],
+      reason: reasons[0] || "text"
+    };
+  });
+}
+
+function computeSearchResults() {
+  state.search.nodeMatches = new Map();
+  state.search.paragraphMatches = new Map();
+  state.search.results = [];
+  state.search.focusedResultIndex = -1;
+
+  const hasSearch = state.search.queryGroups.length > 0;
+  if (!hasSearch) {
+    renderSearchState();
+    return;
+  }
+
+  if (invalidSearchClauses().length > 0) {
+    renderSearchState();
+    return;
+  }
+
+  applyExactSearch();
+  collapseSearchResultsByNode();
+  state.search.results.sort((a, b) => compareOrderKey(a.orderKey, b.orderKey) || a.id.localeCompare(b.id));
+  renderSearchState();
+}
+
+function renderParagraphMatch(index, paragraphMatch, isFocused) {
+  const item = state.detailParagraphEls[index];
+  const paragraphEl = state.detailParagraphTextEls[index];
+  const reasonEl = state.detailParagraphReasonEls[index];
+  const text = SOURCE[index];
+  const spans = mergeSpans(paragraphMatch ? paragraphMatch.spans : []);
+  const reasons = paragraphMatch ? [...paragraphMatch.reasons] : [];
+
+  item.classList.toggle("is-search-match", Boolean(paragraphMatch));
+  item.classList.toggle("is-search-focused", isFocused);
+  item.classList.toggle("has-search-spans", spans.length > 0);
+  item.classList.toggle("has-search-reasons", reasons.length > 0);
+
+  paragraphEl.innerHTML = spans.length > 0 ? renderMarkedHTML(text, spans) : escapeHTML(text);
+  reasonEl.innerHTML = reasons.map((reason) => `<span class="reason-pill">${escapeHTML(reasonLabel(reason))}</span>`).join("");
+}
+
+function renderNodeMatch(nodeId, nodeMatch, isFocused) {
+  const meta = NODE_INDEX.get(nodeId);
+  const card = state.nodeDomMap.get(nodeId);
+  const label = state.nodeLabelDomMap.get(nodeId);
+  if (!meta || !card || !label) return;
+
+  const reasons = nodeMatch ? [...nodeMatch.reasons] : [];
+  const mergedSpans = mergeSpans(nodeMatch ? nodeMatch.labelSpans : []);
+
+  card.classList.toggle("is-search-match", Boolean(nodeMatch));
+  card.classList.toggle("is-search-direct", reasons.some((reason) => ["outline", "role"].includes(reason)));
+  card.classList.toggle("is-search-support", reasons.includes("text"));
+  card.classList.toggle("is-search-focused", isFocused);
+  card.classList.toggle("is-search-role-only", reasons.length > 0 && reasons.every((reason) => reason === "role"));
+  label.innerHTML = mergedSpans.length > 0 ? renderMarkedHTML(meta.node.label, mergedSpans) : escapeHTML(meta.node.label);
+}
+
+function renderSearchSummary() {
+  if (state.search.queryGroups.length === 0) {
+    dom.searchSummary.hidden = false;
+    dom.searchSummary.textContent = 'Examples: ^Introduction, "public speaking", truth|attention, role:example AND freedom';
+    return;
+  }
+
+  const invalidClause = invalidSearchClauses()[0];
+  if (invalidClause) {
+    dom.searchSummary.hidden = false;
+    dom.searchSummary.textContent = `Invalid regex in ${formatClauseText(invalidClause)}: ${invalidClause.pattern.error}.`;
+    return;
+  }
+
+  dom.searchSummary.hidden = true;
+  dom.searchSummary.textContent = "";
+}
+
+function updateSearchCount() {
+  if (invalidSearchClauses().length > 0) {
+    dom.searchCount.textContent = "Invalid regex";
+    return;
+  }
+  const total = state.search.results.length;
+  if (state.search.focusedResultIndex >= 0 && total > 0) {
+    dom.searchCount.textContent = `${state.search.focusedResultIndex + 1} / ${total} matches`;
+    return;
+  }
+  dom.searchCount.textContent = `${total} match${total === 1 ? "" : "es"}`;
+}
+
+function renderSearchState() {
+  state.detailParagraphEls.forEach((_, index) => {
+    renderParagraphMatch(index, state.search.paragraphMatches.get(index), state.search.focusedResultIndex >= 0 && state.search.results[state.search.focusedResultIndex]?.paragraphIndex === index);
+  });
+
+  state.nodeDomMap.forEach((_, nodeId) => {
+    renderNodeMatch(nodeId, state.search.nodeMatches.get(nodeId), state.search.focusedResultIndex >= 0 && state.search.results[state.search.focusedResultIndex]?.nodeId === nodeId);
+  });
+
+  renderSearchSummary();
+  updateSearchCount();
+  dom.searchPrevBtn.disabled = state.search.results.length === 0;
+  dom.searchNextBtn.disabled = state.search.results.length === 0;
+}
+
+function setFocusedSearchResult(index) {
+  state.search.focusedResultIndex = index;
+  renderSearchState();
+}
+
+function focusSearchResult(index, shouldScroll = true) {
+  if (!state.search.results[index]) return;
+  state.search.focusedResultIndex = index;
+  const result = state.search.results[index];
+
+  if (result.nodeId) {
+    setSelectedNode(result.nodeId, shouldScroll);
+  }
+
+  if (shouldScroll && Number.isInteger(result.paragraphIndex)) {
+    const paragraphEl = state.detailParagraphEls[result.paragraphIndex];
+    if (paragraphEl) {
+      const top = Math.max(0, paragraphEl.offsetTop - dom.detailBody.clientHeight * 0.22);
+      dom.detailBody.scrollTo({ top, behavior: "smooth" });
+    }
+  }
+
+  renderSearchState();
+}
+
+function focusRelativeSearchResult(offset) {
+  if (state.search.results.length === 0) return;
+  if (state.search.focusedResultIndex < 0) {
+    focusSearchResult(offset > 0 ? 0 : state.search.results.length - 1);
+    return;
+  }
+  const nextIndex = (state.search.focusedResultIndex + offset + state.search.results.length) % state.search.results.length;
+  focusSearchResult(nextIndex);
+}
+
+function appendSearchTerm(rawValue, options = {}) {
+  const { prefix = null } = options;
+  const value = normalizeWhitespace(rawValue);
+  if (!value) return;
+
+  const existingClauses = flattenQueryGroups(parseQueryGroups(dom.searchInput.value));
+  const valueNormalized = foldForMatch(value);
+  const alreadyPresent = existingClauses.some((clause) => clause.normalized === valueNormalized && (clause.field || null) === prefix);
+  const renderedTerm = prefix ? `${prefix}:${quoteIfNeeded(value)}` : quoteIfNeeded(value);
+  const nextValue = alreadyPresent
+    ? dom.searchInput.value
+    : normalizeWhitespace(dom.searchInput.value)
+      ? `${normalizeWhitespace(dom.searchInput.value)} AND ${renderedTerm}`
+      : renderedTerm;
+
+  dom.searchInput.value = nextValue;
+  state.search.rawInput = nextValue;
+  dom.searchInput.focus();
+  const cursor = dom.searchInput.value.length;
+  dom.searchInput.setSelectionRange(cursor, cursor);
+  runSearchFromInput(true);
+}
+
+function replaceActiveToken(value, options = {}) {
+  const { raw = false } = options;
+  const cursor = dom.searchInput.selectionStart ?? dom.searchInput.value.length;
+  const range = getActiveTokenRange(dom.searchInput.value, cursor);
+  const prefix = dom.searchInput.value.slice(0, range.start);
+  const suffix = dom.searchInput.value.slice(range.end);
+  const replacementValue = raw ? value : quoteIfNeeded(value);
+  const replacement = value ? `${replacementValue} ` : "";
+  dom.searchInput.value = `${prefix}${replacement}${suffix}`.replace(/\s{2,}/g, " ").trimStart();
+  const nextCursor = Math.min(dom.searchInput.value.length, prefix.length + replacement.length);
+  dom.searchInput.focus();
+  dom.searchInput.setSelectionRange(nextCursor, nextCursor);
+}
+
+function renderSuggestions() {
+  dom.searchSuggestions.innerHTML = "";
+
+  if (!state.search.suggestionsOpen || state.search.suggestions.length === 0) {
+    dom.searchSuggestions.hidden = true;
+    return;
+  }
+
+  dom.searchSuggestions.hidden = false;
+  let currentGroup = "";
+
+  state.search.suggestions.forEach((suggestion, index) => {
+    if (suggestion.group !== currentGroup) {
+      currentGroup = suggestion.group;
+      const header = createElement("div", "search-suggestion-group");
+      header.textContent = currentGroup;
+      dom.searchSuggestions.appendChild(header);
+    }
+
+    const button = createElement("button", "search-suggestion");
+    button.type = "button";
+    button.classList.toggle("is-active", index === state.search.activeSuggestionIndex);
+    button.innerHTML =
+      `<div class="search-suggestion-main">${suggestion.labelHTML}</div>` +
+      (suggestion.subLabelHTML ? `<div class="search-suggestion-sub">${suggestion.subLabelHTML}</div>` : "") +
+      (suggestion.previewHTML ? `<div class="search-suggestion-preview">${suggestion.previewHTML}</div>` : "");
+    button.addEventListener("mousedown", (event) => event.preventDefault());
+    button.addEventListener("click", () => applySuggestion(suggestion));
+    dom.searchSuggestions.appendChild(button);
+  });
+}
+
+function showSuggestions(suggestions) {
+  state.search.suggestions = suggestions;
+  state.search.suggestionsOpen = suggestions.length > 0;
+  state.search.activeSuggestionIndex = -1;
+  renderSuggestions();
+}
+
+function hideSuggestions() {
+  state.search.suggestions = [];
+  state.search.suggestionsOpen = false;
+  state.search.activeSuggestionIndex = -1;
+  renderSuggestions();
+}
+
+function scoreSuggestion(label, fragment, weight = 0) {
+  const foldedLabel = foldForMatch(label);
+  const foldedFragment = foldForMatch(fragment);
+  if (!foldedFragment) return weight;
+  const starts = foldedLabel.startsWith(foldedFragment) ? 100 : foldedLabel.includes(foldedFragment) ? 60 : 0;
+  return starts + weight - Math.min(24, Math.max(0, foldedLabel.length - foldedFragment.length));
+}
+
+function scoreSuggestionFromSpans(spans, weight = 0) {
+  if (!Array.isArray(spans) || spans.length === 0) return -(10 ** 6);
+  const first = spans[0];
+  const starts = first.start === 0 ? 100 : Math.max(36, 72 - Math.min(36, first.start));
+  const matchLength = Math.max(1, first.end - first.start);
+  return starts + weight - Math.min(18, Math.max(0, matchLength - 1));
+}
+
+function buildSuggestions() {
+  const text = dom.searchInput.value;
+  const cursor = dom.searchInput.selectionStart ?? text.length;
+  const activeToken = getActiveTokenRange(text, cursor).value;
+  const { field, value } = splitFieldPrefix(activeToken);
+  const activeTokenValue = normalizeWhitespace(stripOuterQuotes(value));
+  const allowsEmptyFieldSuggestions = field === "role";
+  const fragment = activeTokenValue;
+  const suggestions = [];
+  const fragmentPattern = !field ? parseSearchPattern(fragment) : null;
+  const regexStyleInput = !field && Boolean(fragmentPattern?.usesRegexSyntax) && !fragmentPattern?.error;
+  const invalidRegexInput = !field && Boolean(fragmentPattern?.usesRegexSyntax) && Boolean(fragmentPattern?.error);
+
+  if (activeTokenValue === "AND" || activeTokenValue === "OR") {
+    hideSuggestions();
+    return;
+  }
+
+  if (invalidRegexInput) {
+    hideSuggestions();
+    return;
+  }
+
+  if (!allowsEmptyFieldSuggestions && !regexStyleInput && activeTokenValue.length < 2) {
+    hideSuggestions();
+    return;
+  }
+
+  if ((field === "role") || (!field && !regexStyleInput)) {
+    ROLE_META.forEach((roleInfo, roleKey) => {
+      const label = roleInfo.label;
+      if (!foldForMatch(label).includes(foldForMatch(fragment)) && !roleKey.includes(normalizeRoleSlug(fragment))) {
+        return;
+      }
+      const queryToken = buildFieldQueryToken("role", roleKey);
+      suggestions.push({
+        group: "Roles",
+        score: scoreSuggestion(queryToken, fragment, 40 + (roleInfo.nodeCount || 0)),
+        labelHTML: renderMarkedHTML(queryToken, findLiteralSpans(queryToken, fragment)),
+        subLabelHTML: roleInfo.label !== roleKey ? `${roleInfo.label} · ${roleInfo.nodeCount || 0} nodes` : `${roleInfo.nodeCount || 0} nodes`,
+        previewHTML: "",
+        apply() {
+          replaceActiveToken(queryToken, { raw: true });
+          hideSuggestions();
+          scheduleSearchCompute(true);
+        }
+      });
+    });
+  }
+
+  if (!field && !regexStyleInput) {
+    NODE_LIST.forEach((meta) => {
+      if (!foldForMatch(meta.node.label).includes(foldForMatch(fragment))) {
+        return;
+      }
+      const snippet = buildSnippet(meta.node.label, fragment, 34);
+      suggestions.push({
+        group: "Outline",
+        score: scoreSuggestion(meta.node.label, fragment, meta.node.weight || 0),
+        labelHTML: renderMarkedHTML(meta.node.label, findLiteralSpans(meta.node.label, fragment)),
+        subLabelHTML: `Paragraphs ${meta.node.range?.[0] ?? 0}–${meta.node.range?.[1] ?? 0}`,
+        previewHTML: renderMarkedHTML(snippet.text, snippet.spans),
+        apply() {
+          replaceActiveToken(meta.node.label);
+          hideSuggestions();
+          scheduleSearchCompute(true);
+        }
+      });
+    });
+
+    SOURCE.forEach((paragraph, index) => {
+      if (!foldForMatch(paragraph).includes(foldForMatch(fragment))) return;
+      const snippet = buildSnippet(paragraph, fragment, 42);
+      suggestions.push({
+        group: "Text",
+        score: scoreSuggestion(paragraph, fragment, 20 - index / 1000),
+        labelHTML: `Paragraph ${index}`,
+        subLabelHTML: "",
+        previewHTML: renderMarkedHTML(snippet.text, snippet.spans),
+        apply() {
+          replaceActiveToken(fragment);
+          hideSuggestions();
+          scheduleSearchCompute(true);
+        }
+      });
+    });
+  }
+
+  if (!field && regexStyleInput) {
+    NODE_LIST.forEach((meta) => {
+      const labelSpans = findRegexSpans(meta.node.label, fragmentPattern);
+      if (labelSpans.length === 0) return;
+      const snippet = buildSnippetFromSpans(meta.node.label, labelSpans, 34);
+      suggestions.push({
+        group: "Outline",
+        score: scoreSuggestionFromSpans(labelSpans, meta.node.weight || 0),
+        labelHTML: renderMarkedHTML(meta.node.label, labelSpans),
+        subLabelHTML: `Paragraphs ${meta.node.range?.[0] ?? 0}–${meta.node.range?.[1] ?? 0}`,
+        previewHTML: renderMarkedHTML(snippet.text, snippet.spans),
+        apply() {
+          replaceActiveToken(meta.node.label);
+          hideSuggestions();
+          scheduleSearchCompute(true);
+        }
+      });
+    });
+
+    SOURCE.forEach((paragraph, index) => {
+      const paragraphSpans = findRegexSpans(paragraph, fragmentPattern);
+      if (paragraphSpans.length === 0) return;
+      const snippet = buildSnippetFromSpans(paragraph, paragraphSpans, 42);
+      suggestions.push({
+        group: "Text",
+        score: scoreSuggestionFromSpans(paragraphSpans, 20 - index / 1000),
+        labelHTML: `Paragraph ${index}`,
+        subLabelHTML: "",
+        previewHTML: renderMarkedHTML(snippet.text, snippet.spans),
+        apply() {
+          replaceActiveToken(fragment);
+          hideSuggestions();
+          scheduleSearchCompute(true);
+        }
+      });
+    });
+  }
+
+  const groupedOrder = { Roles: 0, Outline: 1, Text: 2 };
+  suggestions.sort((a, b) => {
+    const groupOrder = (groupedOrder[a.group] ?? 9) - (groupedOrder[b.group] ?? 9);
+    if (groupOrder !== 0) return groupOrder;
+    return b.score - a.score;
+  });
+
+  const limited = suggestions.slice(0, SUGGESTION_LIMIT);
+  showSuggestions(limited);
+}
+
+function applySuggestion(suggestion) {
+  suggestion.apply();
+}
+
+function runSearchFromInput(focusFirstResult = true) {
+  clearTimeout(state.searchDebounceTimer);
+  state.search.rawInput = dom.searchInput.value;
+  state.search.queryGroups = parseQueryGroups(state.search.rawInput);
+  computeSearchResults();
+  hideSuggestions();
+  if (focusFirstResult && state.search.results.length > 0) {
+    focusSearchResult(0);
+  } else {
+    buildSuggestions();
+  }
+}
+
+function scheduleSearchCompute(focusFirstResult = false) {
+  clearTimeout(state.searchDebounceTimer);
+  state.searchDebounceTimer = setTimeout(() => {
+    state.search.rawInput = dom.searchInput.value;
+    state.search.queryGroups = parseQueryGroups(state.search.rawInput);
+    computeSearchResults();
+    buildSuggestions();
+    if (focusFirstResult && state.search.results.length > 0) {
+      focusSearchResult(0);
+    }
+  }, SEARCH_INPUT_DEBOUNCE_MS);
+}
+
+function clearSearch() {
+  state.search.rawInput = "";
+  state.search.queryGroups = [];
+  state.search.results = [];
+  state.search.focusedResultIndex = -1;
+  state.search.nodeMatches = new Map();
+  state.search.paragraphMatches = new Map();
+  dom.searchInput.value = "";
+  hideSuggestions();
+  renderSearchState();
+}
+
+function initSearch() {
+  renderSearchSummary();
+  updateSearchCount();
+
+  dom.searchInput.addEventListener("input", () => {
+    scheduleSearchCompute();
+  });
+
+  dom.searchInput.addEventListener("focus", () => {
+    buildSuggestions();
+  });
+
+  dom.searchInput.addEventListener("keydown", (event) => {
+    if (event.key === "ArrowDown" && state.search.suggestionsOpen) {
+      event.preventDefault();
+      if (state.search.activeSuggestionIndex < 0) {
+        state.search.activeSuggestionIndex = 0;
+      } else {
+        state.search.activeSuggestionIndex = (state.search.activeSuggestionIndex + 1) % state.search.suggestions.length;
+      }
+      renderSuggestions();
+      return;
+    }
+
+    if (event.key === "ArrowUp" && state.search.suggestionsOpen) {
+      event.preventDefault();
+      if (state.search.activeSuggestionIndex < 0) {
+        state.search.activeSuggestionIndex = state.search.suggestions.length - 1;
+      } else {
+        state.search.activeSuggestionIndex = (state.search.activeSuggestionIndex - 1 + state.search.suggestions.length) % state.search.suggestions.length;
+      }
+      renderSuggestions();
+      return;
+    }
+
+    if (event.key === "Tab" && !event.shiftKey && state.search.suggestionsOpen && state.search.suggestions.length > 0) {
+      event.preventDefault();
+      const suggestionIndex = state.search.activeSuggestionIndex >= 0 ? state.search.activeSuggestionIndex : 0;
+      applySuggestion(state.search.suggestions[suggestionIndex]);
+      return;
+    }
+
+    if (event.key === "Escape") {
+      hideSuggestions();
+      return;
+    }
+
+    if (event.key === "Enter") {
+      event.preventDefault();
+      if (state.search.suggestionsOpen && state.search.activeSuggestionIndex >= 0) {
+        applySuggestion(state.search.suggestions[state.search.activeSuggestionIndex]);
+      } else {
+        runSearchFromInput(true);
+      }
+    }
+  });
+
+  [dom.searchPrevBtn, dom.searchNextBtn].forEach((button) => {
+    button.addEventListener("mousedown", (event) => event.preventDefault());
+  });
+  dom.searchPrevBtn.addEventListener("click", () => focusRelativeSearchResult(-1));
+  dom.searchNextBtn.addEventListener("click", () => focusRelativeSearchResult(1));
+  dom.searchClearBtn.addEventListener("click", clearSearch);
+
+  dom.detailMeta.addEventListener("click", (event) => {
+    const roleBadge = event.target.closest("[data-role]");
+    if (!roleBadge) return;
+    event.preventDefault();
+    const roleInfo = getRoleInfo(roleBadge.dataset.role);
+    appendSearchTerm(roleInfo?.label || formatRoleLabel(roleBadge.dataset.role), { prefix: "role" });
+  });
+
+  document.addEventListener("click", (event) => {
+    if (!dom.searchShell.contains(event.target)) {
+      hideSuggestions();
+    }
+  });
 }
 
 function handleKeyNavigation(event) {
@@ -1341,6 +2445,7 @@ function handleKeyNavigation(event) {
 }
 
 function handleWindowResize() {
+  syncTreeViewportHeight();
   syncBranchAnchors();
   syncTreeCanvasSize();
   syncConnectorRails();
@@ -1353,18 +2458,19 @@ function initApp() {
   initPageChrome();
   initTooltip();
   createLegend();
-  initRoleFilters();
   initDetailBodyWithSource();
   dom.appRoot.appendChild(renderBranch(ROOT_NODE_ID));
-  updateRoleVisualMarks();
   syncBranchAnchors();
   syncConnectorRails();
+  syncTreeViewportHeight();
   syncTreeCanvasSize();
   updateTreeZoomReadout();
   setSelectedNode(ROOT_NODE_ID, false);
+  initSearch();
 
   window.addEventListener("keydown", handleKeyNavigation);
   window.addEventListener("resize", handleWindowResize);
+  window.addEventListener("load", handleWindowResize);
 
   initTreeViewport();
 }

@@ -9,7 +9,7 @@ Hard errors:
   1. splits.json points to a readable source file.
   2. split points are valid, ordered, and produce non-empty source paragraphs.
   3. required page metadata exists.
-  4. every node has a valid label, role, range, and weight.
+  4. every node has a valid label, roles, range, and weight.
   5. each child range stays inside its parent range.
   6. sibling ranges preserve source order, do not overlap, and fully cover the parent.
   7. every leaf range contributes to complete source coverage.
@@ -38,7 +38,7 @@ from pathlib import Path
 
 
 REQUIRED_PAGE_KEYS = ("title", "subtitle", "desc", "footer")
-ALLOWED_NODE_KEYS = {"label", "role", "weight", "range", "children"}
+ALLOWED_NODE_KEYS = {"label", "roles", "weight", "range", "children"}
 
 EN_WEAK_OPENINGS = (
     "he ",
@@ -86,6 +86,13 @@ def load_json(path):
 
 def collapse_ws(text):
     return re.sub(r"\s+", " ", text.strip())
+
+
+def slugify_role(text):
+    text = collapse_ws(text).casefold().replace("&", " and ")
+    text = re.sub(r"[\s_]+", "-", text)
+    text = re.sub(r"[^a-z0-9-]+", "-", text)
+    return re.sub(r"-{2,}", "-", text).strip("-")
 
 
 def visible_chars(text):
@@ -260,6 +267,49 @@ def validate_range(range_value, total, errors, path):
     return (start, end)
 
 
+def iter_surface_spans(text, surface):
+    spans = []
+    cursor = 0
+    while surface:
+        found = text.find(surface, cursor)
+        if found == -1:
+            break
+        spans.append((found, found + len(surface)))
+        cursor = found + max(1, len(surface))
+    return spans
+
+
+def resolve_semantic_span(paragraph, surface, span_value, context_before, context_after):
+    if (
+        isinstance(span_value, list)
+        and len(span_value) == 2
+        and all(isinstance(value, int) and not isinstance(value, bool) for value in span_value)
+        and 0 <= span_value[0] < span_value[1] <= len(paragraph)
+        and paragraph[span_value[0] : span_value[1]] == surface
+    ):
+        return (span_value[0], span_value[1]), None
+
+    matches = iter_surface_spans(paragraph, surface)
+    if not matches:
+        return None, "surface does not occur in the target paragraph"
+
+    if context_before or context_after:
+        filtered = []
+        for start, end in matches:
+            before_ok = context_before is None or (start >= len(context_before) and paragraph[start - len(context_before) : start] == context_before)
+            after_ok = context_after is None or paragraph[end : end + len(context_after)] == context_after
+            if before_ok and after_ok:
+                filtered.append((start, end))
+        if len(filtered) == 1:
+            return filtered[0], None
+        matches = filtered or matches
+
+    if len(matches) == 1:
+        return matches[0], None
+
+    return None, "surface is ambiguous in the target paragraph; add context_before/context_after"
+
+
 def infer_label_lang(page, labels, source_lang):
     explicit = normalize_lang(page.get("label_lang")) or normalize_lang(page.get("lang"))
     if explicit:
@@ -317,7 +367,7 @@ def lint_roles(role_entries, total_nodes, warnings):
 
     normalized = {}
     for path, role in role_entries:
-        key = collapse_ws(role).casefold()
+        key = slugify_role(role)
         normalized[key] = role
 
         if count_words(role) > 4 or visible_chars(role) > 28:
@@ -328,6 +378,46 @@ def lint_roles(role_entries, total_nodes, warnings):
             warnings,
             f"tree declares {len(normalized)} distinct roles; consider merging niche roles into a smaller reusable set",
         )
+
+    if total_nodes and len(normalized) / total_nodes > 0.7:
+        add_issue(
+            warnings,
+            f"tree declares {len(normalized)} distinct roles across {total_nodes} nodes; check whether roles are too niche to work well as search chips",
+        )
+
+
+def normalize_node_roles(node, errors, path):
+    raw_roles = []
+    roles_value = node.get("roles")
+    if not isinstance(roles_value, list):
+        add_issue(errors, f"[{path}] roles must be a non-empty list")
+        return []
+    raw_roles.extend(roles_value)
+
+    normalized = []
+    seen = set()
+    for idx, raw_role in enumerate(raw_roles):
+        if not isinstance(raw_role, str):
+            add_issue(errors, f"[{path}] roles[{idx}] must be a non-empty string")
+            continue
+        collapsed = collapse_ws(raw_role)
+        if not collapsed:
+            add_issue(errors, f"[{path}] roles[{idx}] must be a non-empty string")
+            continue
+        slug = slugify_role(collapsed)
+        if not slug:
+            add_issue(errors, f"[{path}] roles[{idx}] normalizes to an empty role slug")
+            continue
+        if slug in seen:
+            add_issue(errors, f"[{path}] duplicate role '{collapsed}' after normalization")
+            continue
+        seen.add(slug)
+        normalized.append(collapsed)
+
+    if not normalized:
+        add_issue(errors, f"[{path}] roles must contain at least one non-empty string")
+
+    return normalized
 
 
 def validate_node(
@@ -359,11 +449,11 @@ def validate_node(
         label = collapse_ws(label)
         label_entries.append((path, label))
 
-    role = node.get("role")
-    if not isinstance(role, str) or not collapse_ws(role):
-        add_issue(errors, f"[{path}] role must be a non-empty string")
-    else:
-        role_entries.append((path, collapse_ws(role)))
+    normalized_roles = normalize_node_roles(node, errors, path)
+    for role in normalized_roles:
+        role_entries.append((path, role))
+    if len(normalized_roles) > 4:
+        add_issue(warnings, f"[{path}] declares {len(normalized_roles)} roles; check whether some can be merged")
 
     node_range = validate_range(node.get("range"), total, errors, path)
     weight = node.get("weight")

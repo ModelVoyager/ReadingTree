@@ -99,24 +99,24 @@ Weak:
 
 ## Role Tags
 
-Every node must declare `role`. The UI and the audit workflow rely on complete role coverage.
+Every node must declare `roles`. The UI and the audit workflow rely on complete role coverage.
 
 - Prefer a small, reusable role set for the whole tree, usually about `2–4` roles.
 - Start broad. In many trees, `claim`, `example`, `mechanism`, and `frame` are enough.
 - Merge narrow rhetorical variants into a broader role unless the distinction is important in the UI.
 - Prefer `claim` over niche labels such as `definition`, `distinction`, `warning`, or `implication` unless the project explicitly needs those distinctions.
 - A role should be stable across articles, not invented ad hoc for one chapter.
-- Because `role` is required, keep the role set useful enough that filter toggles still help the reader.
+- Because `roles` are required, keep the role set useful enough that search chips still help the reader.
 - Role coverage must be complete. Do not leave spotty gaps.
 - Fold role review into the same one-row-per-label audit table used for final label review. Do not create a separate role table unless the user explicitly asks for one.
-- Each label-audit row must check both the label and the node's assigned role.
+- Each label-audit row must check both the label and the node's assigned roles.
 
 Required role columns in the combined label audit table:
 
-- `role`
-- `role present`
-- `role fits node function`
-- `role wording stays broad`
+- `roles`
+- `roles present`
+- `roles fit node function`
+- `roles stay broad`
 
 Meaning-fidelity examples:
 
@@ -201,10 +201,10 @@ Recommended columns:
 - `fits full covered range`
 - `modality preserved`
 - `loaded wording avoided`
-- `role`
-- `role present`
-- `role fits node function`
-- `role wording stays broad`
+- `roles`
+- `roles present`
+- `roles fit node function`
+- `roles stay broad`
 - `action needed`
 
 Checklist:

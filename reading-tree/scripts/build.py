@@ -7,8 +7,10 @@ Usage:
 """
 import argparse
 import json
-from pathlib import Path
+import re
 import sys
+import unicodedata
+from pathlib import Path
 
 
 REQUIRED_PAGE_KEYS = ("title", "subtitle", "desc", "footer")
@@ -21,13 +23,36 @@ def parse_args():
     return parser.parse_args()
 
 
+def collapse_ws(text):
+    return re.sub(r"\s+", " ", str(text).strip())
+
+
+def normalize_text(text):
+    text = unicodedata.normalize("NFKC", str(text))
+    text = text.replace("\u2018", "'").replace("\u2019", "'")
+    text = text.replace("\u201c", '"').replace("\u201d", '"')
+    text = text.replace("\xa0", " ")
+    return collapse_ws(text)
+
+
+def slugify(value):
+    value = normalize_text(value).casefold()
+    value = value.replace("&", " and ")
+    value = re.sub(r"[\s_]+", "-", value)
+    value = re.sub(r"[^a-z0-9-]+", "-", value)
+    value = re.sub(r"-{2,}", "-", value).strip("-")
+    return value
+
+
 def read_lines(path):
     with path.open("r", encoding="utf-8") as f:
         return f.readlines()
+
+
 def split_paragraphs(lines, split_points):
     paragraphs = []
-    for i, start in enumerate(split_points):
-        end = split_points[i + 1] if i + 1 < len(split_points) else len(lines) + 1
+    for index, start in enumerate(split_points):
+        end = split_points[index + 1] if index + 1 < len(split_points) else len(lines) + 1
         chunk = "".join(lines[start - 1 : end - 1]).strip()
         if chunk:
             paragraphs.append(chunk)
@@ -36,20 +61,50 @@ def split_paragraphs(lines, split_points):
 
 def build_source_js(paragraphs):
     entries = []
-    for i, p in enumerate(paragraphs):
-        entries.append(f"  // {i}\n  {json.dumps(p, ensure_ascii=False)}")
+    for index, paragraph in enumerate(paragraphs):
+        entries.append(f"  // {index}\n  {json.dumps(paragraph, ensure_ascii=False)}")
     return "globalThis.LINKED_READING_SOURCE = [\n" + ",\n".join(entries) + "\n];\n"
 
 
+def normalize_roles(node):
+    raw_roles = node.get("roles") if isinstance(node.get("roles"), list) else []
+    seen = set()
+    roles = []
+    for raw_role in raw_roles:
+        if not isinstance(raw_role, str):
+            continue
+        slug = slugify(raw_role)
+        if not slug or slug in seen:
+            continue
+        seen.add(slug)
+        roles.append(slug)
+    return roles
+
+
 def build_tree_data_js(tree_cfg):
-    tree_str = json.dumps(tree_cfg["tree"], ensure_ascii=False, indent=2)
+    source_tree = json.loads(json.dumps(tree_cfg["tree"]))
+
+    def normalize_walk(node):
+        if not isinstance(node, dict):
+            return {}
+        normalized = {}
+        for key in ("label", "weight", "range"):
+            if key in node:
+                normalized[key] = node[key]
+        normalized["roles"] = normalize_roles(node)
+        children = node.get("children") if isinstance(node.get("children"), list) else []
+        normalized["children"] = [normalize_walk(child) for child in children if isinstance(child, dict)]
+        return normalized
+
+    tree = normalize_walk(source_tree)
+
+    tree_str = json.dumps(tree, ensure_ascii=False, indent=2)
     page = tree_cfg["page"]
     lines = [f"globalThis.LINKED_READING_TREE_DATA = {tree_str};\n"]
     for key in REQUIRED_PAGE_KEYS:
-        val = page[key]
         const_name = "LINKED_READING_PAGE_" + key.upper()
         lines.append(
-            f"globalThis[{json.dumps(const_name, ensure_ascii=False)}] = {json.dumps(val, ensure_ascii=False)};"
+            f"globalThis[{json.dumps(const_name, ensure_ascii=False)}] = {json.dumps(page[key], ensure_ascii=False)};"
         )
     return "\n".join(lines) + "\n"
 

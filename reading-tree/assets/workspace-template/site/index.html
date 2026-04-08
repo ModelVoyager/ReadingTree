@@ -19,6 +19,11 @@
         --path-highlight: #b46c22;
         --path-highlight-soft: rgba(180, 108, 34, 0.16);
         --path-highlight-glow: rgba(180, 108, 34, 0.28);
+        --search-accent: #1f7f7c;
+        --search-soft: rgba(31, 127, 124, 0.16);
+        --search-glow: rgba(31, 127, 124, 0.24);
+        --search-inline: #f4dd89;
+        --search-inline-border: rgba(169, 122, 20, 0.32);
       }
 
       * {
@@ -40,7 +45,7 @@
       }
 
       .header {
-        margin-bottom: 20px;
+        margin-bottom: 18px;
       }
 
       .title-row {
@@ -84,52 +89,205 @@
         letter-spacing: 0.08em;
       }
 
-      .role-filters {
-        margin-top: 12px;
-        display: flex;
-        flex-wrap: wrap;
-        align-items: center;
-        gap: 8px 10px;
-      }
-
-      .role-filter-label {
-        color: #9a8263;
-        letter-spacing: 0.08em;
-        font-size: 11px;
-      }
-
-      .role-filter {
-        display: inline-flex;
-        align-items: center;
-        gap: 8px;
-        padding: 4px 10px;
-        border: 1px solid #d7c3a7;
-        border-radius: 999px;
-        background: rgba(252, 246, 235, 0.86);
-        color: #6f5b43;
-        font-size: 11px;
-        line-height: 1;
-        user-select: none;
-      }
-
-      .role-filter input {
-        margin: 0;
-        accent-color: #9a5c24;
-      }
-
-      .role-filter-swatch {
-        width: 10px;
-        height: 10px;
-        border-radius: 999px;
-        box-shadow: 0 0 0 2px rgba(255, 248, 238, 0.92);
-        flex-shrink: 0;
-      }
-
       .weight-dot {
         display: inline-block;
         border-radius: 4px;
         margin-right: 6px;
         vertical-align: middle;
+      }
+
+      .search-shell {
+        position: relative;
+        margin-bottom: 14px;
+        border: 1px solid #d7c3a5;
+        border-radius: 16px;
+        background: linear-gradient(160deg, rgba(252, 246, 237, 0.96), rgba(247, 238, 223, 0.98));
+        box-shadow: 0 14px 30px rgba(104, 78, 45, 0.08);
+        padding: 14px;
+      }
+
+      .search-toolbar {
+        display: flex;
+        gap: 12px;
+        align-items: flex-start;
+      }
+
+      .search-modes {
+        display: inline-flex;
+        gap: 6px;
+        flex-wrap: wrap;
+      }
+
+      .search-mode-btn,
+      .search-nav-btn,
+      .search-clear-btn,
+      .tree-toolbar button {
+        border-radius: 999px;
+        font: inherit;
+        cursor: pointer;
+      }
+
+      .search-mode-btn {
+        border: 1px solid #cfb292;
+        padding: 6px 12px;
+        background: rgba(255, 248, 239, 0.88);
+        color: #7a6043;
+        font-size: 11px;
+        letter-spacing: 0.05em;
+      }
+
+      .search-mode-btn.is-active {
+        border-color: rgba(31, 127, 124, 0.48);
+        background: rgba(219, 241, 239, 0.92);
+        color: #195f5c;
+        box-shadow: 0 0 0 2px rgba(31, 127, 124, 0.1);
+      }
+
+      .search-main {
+        flex: 1;
+        min-width: 0;
+      }
+
+      .search-field-row {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+      }
+
+      .search-field {
+        flex: 1;
+        min-width: 0;
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 8px;
+        padding: 8px 10px;
+        border: 1px solid #d8c4a7;
+        border-radius: 14px;
+        background: rgba(255, 250, 242, 0.95);
+        box-shadow: inset 0 1px 2px rgba(117, 88, 54, 0.05);
+      }
+
+      .search-input {
+        flex: 1;
+        min-width: 220px;
+        border: 0;
+        outline: none;
+        font: inherit;
+        color: var(--text);
+        background: transparent;
+        font-size: 13px;
+      }
+
+      .search-input::placeholder {
+        color: #8d765a;
+      }
+
+      .search-actions {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        flex-wrap: wrap;
+      }
+
+      .search-nav-btn,
+      .search-clear-btn {
+        border: 1px solid #d2b694;
+        background: #fff8ef;
+        color: #7d6447;
+        padding: 5px 11px;
+        font-size: 11px;
+      }
+
+      .search-nav-btn:disabled {
+        cursor: default;
+        opacity: 0.48;
+      }
+
+      .search-count {
+        min-width: 86px;
+        color: #6e5a44;
+        font-size: 11px;
+        text-align: center;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .search-helper {
+        margin-top: 9px;
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: space-between;
+        gap: 8px 16px;
+        color: #866e53;
+        font-size: 11px;
+        line-height: 1.6;
+      }
+
+      .search-rule {
+        font-weight: 700;
+        letter-spacing: 0.03em;
+      }
+
+      .search-summary {
+        flex: 1;
+        min-width: 220px;
+      }
+
+      .search-suggestions {
+        position: absolute;
+        z-index: 25;
+        left: 14px;
+        right: 14px;
+        top: calc(100% - 6px);
+        border: 1px solid #d8c4a7;
+        border-radius: 14px;
+        background: rgba(255, 249, 240, 0.985);
+        box-shadow: 0 14px 34px rgba(102, 78, 47, 0.18);
+        padding: 8px;
+        max-height: min(420px, 54vh);
+        overflow: auto;
+      }
+
+      .search-suggestion-group {
+        padding: 8px 10px 4px;
+        color: #8d7457;
+        font-size: 10px;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+      }
+
+      .search-suggestion {
+        width: 100%;
+        text-align: left;
+        border: 0;
+        border-radius: 10px;
+        background: transparent;
+        color: inherit;
+        cursor: pointer;
+        padding: 8px 10px;
+      }
+
+      .search-suggestion:hover,
+      .search-suggestion.is-active {
+        background: rgba(223, 243, 241, 0.76);
+      }
+
+      .search-suggestion-main {
+        color: #564433;
+        font-size: 12px;
+      }
+
+      .search-suggestion-sub {
+        margin-top: 3px;
+        color: #88715a;
+        font-size: 10px;
+      }
+
+      .search-suggestion-preview {
+        margin-top: 4px;
+        color: #614d3c;
+        font-size: 11px;
+        line-height: 1.55;
       }
 
       .workspace {
@@ -161,23 +319,18 @@
         gap: 6px;
       }
 
-      .tree-toolbar button {
-        border-radius: 999px;
-        padding: 3px 10px;
-        font: inherit;
-        cursor: pointer;
-      }
-
       .tree-zoom-btn {
         border: 1px solid #c9a67c;
         background: #faf2e5;
         color: #81552b;
+        padding: 3px 10px;
       }
 
       .tree-reset-btn {
         border: 1px solid #d5b58d;
         background: #fff8ef;
         color: #876649;
+        padding: 3px 10px;
       }
 
       .tree-zoom-readout {
@@ -241,11 +394,62 @@
         animation: selected-halo-breathe 2.4s ease-in-out infinite;
       }
 
+      .node.is-selected.is-search-match {
+        outline: 3px solid rgba(31, 127, 124, 0.7);
+        outline-offset: 4px;
+        box-shadow:
+          0 0 0 2px rgba(147, 86, 31, 0.9),
+          0 0 0 5px rgba(247, 229, 195, 0.95),
+          0 0 0 8px rgba(31, 127, 124, 0.22),
+          0 10px 28px rgba(166, 104, 45, 0.34) !important;
+      }
+
+      .node.is-selected.is-search-direct {
+        border-color: color-mix(in srgb, #93561f 62%, #1f7f7c 38%) !important;
+      }
+
+      .node.is-selected.is-search-support:not(.is-search-direct) {
+        border-color: color-mix(in srgb, #93561f 82%, #1f7f7c 18%) !important;
+      }
+
       .node.is-on-selected-path-node:not(.is-selected) {
         border-color: color-mix(in srgb, var(--path-highlight) 70%, #d8bc98 30%) !important;
         box-shadow:
           0 0 0 2px rgba(180, 108, 34, 0.14),
           0 8px 20px rgba(166, 104, 45, 0.14) !important;
+      }
+
+      .node.is-search-match:not(.is-selected) {
+        outline: 3px solid rgba(31, 127, 124, 0.48);
+        outline-offset: 3px;
+        box-shadow:
+          0 0 0 3px rgba(31, 127, 124, 0.34),
+          0 0 0 7px rgba(225, 244, 243, 0.82),
+          0 10px 24px rgba(31, 127, 124, 0.18) !important;
+      }
+
+      .node.is-search-direct:not(.is-selected) {
+        border-color: rgba(31, 127, 124, 0.9) !important;
+      }
+
+      .node.is-search-support:not(.is-selected) {
+        border-color: rgba(31, 127, 124, 0.54) !important;
+        box-shadow:
+          0 0 0 3px rgba(31, 127, 124, 0.26),
+          0 0 0 6px rgba(225, 244, 243, 0.68),
+          0 8px 20px rgba(31, 127, 124, 0.14) !important;
+      }
+
+      .node.is-search-focused {
+        outline-color: rgba(31, 127, 124, 0.92);
+        box-shadow:
+          0 0 0 2px rgba(31, 127, 124, 0.65),
+          0 0 0 6px rgba(220, 244, 242, 0.94),
+          0 12px 28px rgba(31, 127, 124, 0.24) !important;
+      }
+
+      .node.is-search-role-only:not(.is-selected) {
+        filter: saturate(0.95);
       }
 
       .node.is-selected-entering {
@@ -268,25 +472,8 @@
         pointer-events: none;
       }
 
-      .role-marker {
-        position: absolute;
-        top: -6px;
-        left: -6px;
-        width: 12px;
-        height: 12px;
-        border-radius: 999px;
-        border: 2px solid rgba(255, 248, 238, 0.95);
-        box-shadow: 0 2px 8px rgba(95, 69, 40, 0.2);
-        opacity: 0;
-        transform: scale(0.72);
-        transition: opacity 160ms ease, transform 160ms ease;
-        pointer-events: none;
-        z-index: 3;
-      }
-
-      .role-marker.is-visible {
-        opacity: 1;
-        transform: scale(1);
+      .node-label {
+        word-break: break-word;
       }
 
       .stem {
@@ -386,20 +573,6 @@
         }
       }
 
-      @media (prefers-reduced-motion: reduce) {
-        .node,
-        .stem,
-        .children-rail,
-        .elbow {
-          transition: none;
-        }
-
-        .node.is-selected::before,
-        .node.is-selected-entering {
-          animation: none !important;
-        }
-      }
-
       .detail {
         position: sticky;
         top: 14px;
@@ -432,6 +605,16 @@
         line-height: 1.7;
       }
 
+      .detail-meta-copy {
+        margin-top: 6px;
+      }
+
+      .role-badge-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+      }
+
       .role-badge {
         --role-color: #8f7554;
         display: inline-flex;
@@ -445,6 +628,7 @@
         font-size: 10px;
         line-height: 1.2;
         vertical-align: middle;
+        font-family: inherit;
       }
 
       .role-badge::before {
@@ -457,8 +641,12 @@
         flex-shrink: 0;
       }
 
-      .detail-meta .role-badge {
-        margin-right: 8px;
+      .role-badge.is-clickable {
+        cursor: pointer;
+      }
+
+      .role-badge.is-active {
+        box-shadow: 0 0 0 2px rgba(31, 127, 124, 0.12);
       }
 
       .detail-hint {
@@ -485,9 +673,10 @@
       }
 
       .detail-paragraph {
+        position: relative;
         border-radius: 8px;
-        padding: 3px 8px 3px 10px;
-        margin-bottom: 1px;
+        padding: 5px 8px 5px 10px;
+        margin-bottom: 3px;
         border: 1px solid transparent;
         background: transparent;
         transition: background-color 170ms ease, border-color 170ms ease, box-shadow 170ms ease;
@@ -501,16 +690,82 @@
         cursor: pointer;
       }
 
-      .detail-paragraph p {
+      .detail-paragraph.is-active {
+        background: linear-gradient(90deg, rgba(226, 181, 116, 0.24), rgba(208, 169, 115, 0.12));
+        border-color: rgba(176, 124, 56, 0.44);
+        box-shadow:
+          inset 4px 0 0 rgba(176, 124, 56, 0.88),
+          inset 0 0 0 1px rgba(176, 124, 56, 0.16),
+          0 0 0 1px rgba(247, 229, 195, 0.7);
+      }
+
+      .detail-paragraph.is-search-match {
+        background: rgba(31, 127, 124, 0.08);
+        border-color: rgba(31, 127, 124, 0.2);
+      }
+
+      .detail-paragraph.is-active.is-search-match {
+        background: linear-gradient(90deg, rgba(226, 181, 116, 0.24), rgba(86, 143, 140, 0.14));
+        border-color: rgba(135, 123, 80, 0.42);
+        box-shadow:
+          inset 4px 0 0 rgba(176, 124, 56, 0.92),
+          inset 0 0 0 1px rgba(176, 124, 56, 0.18),
+          0 0 0 1px rgba(31, 127, 124, 0.14);
+      }
+
+      .detail-paragraph.is-search-focused {
+        box-shadow:
+          inset 0 0 0 1px rgba(31, 127, 124, 0.14),
+          0 0 0 2px rgba(31, 127, 124, 0.15);
+      }
+
+      .detail-paragraph.is-active .detail-paragraph-text {
+        color: #3e2d1d;
+        font-weight: 600;
+      }
+
+      .detail-paragraph.is-active .reason-pill {
+        background: rgba(255, 247, 234, 0.92);
+        border-color: rgba(176, 124, 56, 0.22);
+        color: #7a5a36;
+      }
+
+      .detail-paragraph-reasons {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 5px;
+        margin-bottom: 4px;
+      }
+
+      .detail-paragraph-reasons:empty {
+        display: none;
+      }
+
+      .reason-pill {
+        display: inline-flex;
+        align-items: center;
+        padding: 2px 7px;
+        border-radius: 999px;
+        background: rgba(225, 239, 238, 0.9);
+        border: 1px solid rgba(31, 127, 124, 0.18);
+        color: #2c6b68;
+        font-size: 9px;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+      }
+
+      .detail-paragraph-text {
         margin: 0;
         color: #4a3b2b;
         font-size: 13px;
       }
 
-      .detail-paragraph.is-active {
-        background: rgba(208, 169, 115, 0.14);
-        border-color: rgba(176, 124, 56, 0.32);
-        box-shadow: inset 0 0 0 1px rgba(176, 124, 56, 0.12);
+      mark.search-inline {
+        padding: 0 1px;
+        border-radius: 4px;
+        background: var(--search-inline);
+        box-shadow: inset 0 0 0 1px var(--search-inline-border);
+        color: inherit;
       }
 
       .detail-empty {
@@ -540,22 +795,16 @@
         padding-bottom: 6px;
       }
 
-      #tooltip .node-meta {
-        display: flex;
-        justify-content: space-between;
-        align-items: flex-start;
-        gap: 10px;
-      }
-
       #tooltip .node-copy {
-        min-width: 0;
-        flex: 1;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
       }
 
       #tooltip .node-kicker {
-        color: #907353;
+        color: #9a8262;
         font-size: 10px;
-        letter-spacing: 0.07em;
+        letter-spacing: 0.12em;
         text-transform: uppercase;
       }
 
@@ -572,11 +821,7 @@
         color: #8f7554;
         font-size: 10px;
         white-space: nowrap;
-        padding-top: 2px;
-      }
-
-      #tooltip .node-role {
-        margin-top: 6px;
+        padding-top: 4px;
       }
 
       #tooltip p {
@@ -588,6 +833,33 @@
 
       #tooltip p:last-child {
         margin-bottom: 0;
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .node,
+        .stem,
+        .children-rail,
+        .elbow,
+        .detail-paragraph {
+          transition: none;
+        }
+
+        .node.is-selected::before,
+        .node.is-selected-entering {
+          animation: none !important;
+        }
+      }
+
+      @media (max-width: 1120px) {
+        .search-toolbar,
+        .search-field-row {
+          flex-direction: column;
+          align-items: stretch;
+        }
+
+        .search-actions {
+          justify-content: flex-start;
+        }
       }
 
       @media (max-width: 980px) {
@@ -605,6 +877,10 @@
         .page {
           padding: 20px 12px 26px;
         }
+
+        .search-shell {
+          padding: 12px;
+        }
       }
     </style>
   </head>
@@ -617,8 +893,40 @@
         </div>
         <p class="desc" id="desc"></p>
         <div class="legend" id="legend"></div>
-        <div class="role-filters" id="role-filters" hidden></div>
       </div>
+
+      <section class="search-shell" id="search-shell">
+        <div class="search-toolbar">
+          <div class="search-main">
+            <div class="search-field-row">
+              <div class="search-field">
+                <input
+                  id="search-input"
+                  class="search-input"
+                  type="text"
+                  autocomplete="off"
+                  spellcheck="false"
+                  placeholder='Regex over text or labels. Try ^Introduction or \"public speaking\". Use role:example for roles.'
+                />
+              </div>
+
+              <div class="search-actions">
+                <button type="button" class="search-nav-btn" id="search-prev">Prev</button>
+                <div class="search-count" id="search-count">0 matches</div>
+                <button type="button" class="search-nav-btn" id="search-next">Next</button>
+                <button type="button" class="search-clear-btn" id="search-clear">Clear</button>
+              </div>
+            </div>
+
+            <div class="search-helper">
+              <div class="search-rule">Text and labels use JavaScript regex. AND is the default. Use uppercase OR for alternatives. Use role: for plain role search.</div>
+              <div class="search-summary" id="search-summary">Examples: ^Introduction, \"public speaking\", truth|attention, role:example AND freedom</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="search-suggestions" id="search-suggestions" hidden></div>
+      </section>
 
       <div class="workspace">
         <div class="tree-pane">
@@ -645,6 +953,7 @@
             <div class="detail-meta" id="detail-meta"></div>
             <div class="detail-hint">
               Full text is shown on the right; selecting a node auto-focuses and highlights its paragraphs.<br />
+              Search highlights are separate from the current selection state.<br />
               Keyboard:
               <span class="kbd">A</span> Parent
               <span class="kbd">D</span> First child

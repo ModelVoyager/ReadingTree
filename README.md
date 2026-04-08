@@ -4,7 +4,9 @@ Reading Tree is an agent skill that turns an article or chapter into a linked ou
 
 I built it for close reading, especially philosophy chapters, long essays, and nonfiction. AI summaries are useful in many cases, but sometimes the source is good enough that I want to read it properly, not just get the gist. Those are exactly the cases where a summary can leave out the parts I would care about most.
 
-Reading Tree keeps the original words in place. Every node links to the passage it covers, and every paragraph links back to the node that explains its role. Nodes are weighted by importance, so you can see at a glance which parts of the argument carry the most weight. It is closer to a very detailed table of contents than a summary.
+Reading Tree keeps the original words in place. Every node links to the passage it covers, and every paragraph links back to the best matching node for that passage. Nodes are weighted by importance, so you can see at a glance which parts of the argument carry the most weight. It is closer to a very detailed table of contents than a summary.
+
+The generated site also includes a global search bar where text and outline labels use JavaScript regex, while roles stay plain.
 
 <img src="docs/images/ui-demo.gif" alt="Reading Tree UI demo" width="720" />
 
@@ -61,6 +63,9 @@ For each text, the deliverable is a workspace containing:
 - a static interactive site in `site/`
 
 The site keeps the full source text, a weighted outline tree, and bidirectional links between nodes and paragraphs.
+It also includes global search where text and outline labels use JavaScript regex, while roles stay plain.
+
+In authored workspaces, `tree.json` uses `roles` on every node.
 
 ## Good Fits
 

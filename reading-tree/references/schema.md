@@ -41,7 +41,7 @@ The skill also contains shared tooling in `reading-tree/scripts/`:
     "label": "Root node",
     "weight": 1.0,
     "range": [0, 9],
-    "role": "claim",
+    "roles": ["claim"],
     "children": []
   }
 }
@@ -52,7 +52,7 @@ Node fields:
 - `label`: required
 - `weight`: required, `0` to `1`
 - `range`: required, inclusive paragraph range `[start, end]`
-- `role`: required short rhetorical category string used by the UI for node detail, tooltip, and role emphasis controls; prefer a small reusable set rather than many niche categories
+- `roles`: required non-empty list of short rhetorical role strings used by the UI for node detail, tooltip, and search-driven role filters; prefer a small reusable set rather than many niche categories
 - `children`: optional
 
 ## Validation Rules
@@ -64,7 +64,7 @@ Node fields:
 3. The union of child ranges fully covers the parent range.
 4. Every source paragraph is covered by at least one leaf node.
 5. A parent weight is not smaller than its strongest child weight.
-6. Every node has a non-empty `role` string.
+6. Every node has at least one non-empty normalized role.
 7. Nodes only use supported keys.
 
 ## Serving
